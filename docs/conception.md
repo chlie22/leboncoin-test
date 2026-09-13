@@ -878,7 +878,7 @@ Configuration livrée à l'étape 3 (`docker/nginx/`), vérifiée par `tests/Smo
 | `RATE_LIMIT_GLOBAL_BURST` | `10` | absorbe les arrivées simultanées de clients différents |
 | `TRUSTED_PROXY_CIDR` | `172.30.0.128/25` : plage des conteneurs du réseau Compose `172.30.0.0/24`, passerelle exclue | proxys autorisés à transmettre la vraie IP ; réseau autorisé sur `/healthz` |
 
-**Pourquoi la passerelle est exclue** : sous Linux, le trafic publié depuis l'hôte entrerait par la passerelle du réseau Compose **[hypothèse]**, à confirmer par le smoke de la CI (étape 4). La faire entrer dans `TRUSTED_PROXY_CIDR` ouvrirait `/healthz` à ce trafic et lui permettrait d'imposer son adresse par `X-Forwarded-For`. Sous Docker Desktop 4.53, ce trafic arrive avec une adresse hors du réseau Docker (observation du 2026-09-13) **[hypothèse]**. Dans les deux cas, `tests/Smoke/smoke.sh` vérifie le 403 sur `/healthz` depuis l'hôte, y compris avec un `X-Forwarded-For: 127.0.0.1` forgé.
+**Pourquoi la passerelle est exclue** : sous Linux, le trafic publié depuis l'hôte entre par la passerelle du réseau Compose **[hypothèse]**. Le smoke de la CI (run GitHub Actions `34777100094` du 2026-09-13, `ubuntu-24.04`, image `prod`) a obtenu les deux 403 sur `/healthz` depuis l'hôte : ce trafic n'arrive donc ni de `127.0.0.1` ni de `TRUSTED_PROXY_CIDR`. L'adresse exacte n'est pas journalisée par le job : que ce soit la passerelle reste une hypothèse. La faire entrer dans `TRUSTED_PROXY_CIDR` ouvrirait `/healthz` à ce trafic et lui permettrait d'imposer son adresse par `X-Forwarded-For`. Sous Docker Desktop 4.53, ce trafic arrive avec une adresse hors du réseau Docker (observation du 2026-09-13) **[hypothèse]**. Dans les deux cas, `tests/Smoke/smoke.sh` vérifie le 403 sur `/healthz` depuis l'hôte, y compris avec un `X-Forwarded-For: 127.0.0.1` forgé.
 
 **Pourquoi les deux quotas** :
 - **Par IP** : un client ne peut pas monopoliser le service. Avec un quota global seul, un unique client abusif bloquerait tout le monde.
@@ -1226,6 +1226,8 @@ Fichier `.github/workflows/ci.yaml` (étape 4) :
 - **Actions épinglées par SHA de commit**, le tag en commentaire **[source]** (GitHub, relevé le 2026-09-13) : `actions/checkout` v7.0.1, `shivammathur/setup-php` 2.37.2, `actions/setup-node` v7.0.0, `actions/cache` v6.1.0. Mise à jour volontaire, comme les tags des images.
 - **Commandes dupliquées** : les jobs reprennent les commandes des cibles `ci`, `lint` et `test` sans appeler `make`, car `lint` inclut le lint OpenAPI, qui demande Node. Un commentaire dans les deux fichiers rappelle de les modifier ensemble.
 - **Lint du workflow** : `docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.12 -color`, en local et hors CI.
+- **Deptrac est muet en CI quand tout est propre** : avec `GITHUB_ACTIONS=true`, il n'affiche aucun rapport et sort en 0 ; sur une violation, il émet des annotations `::error` et sort en 1 **[source]** (Deptrac 4.7.1, sonde locale du 2026-09-13).
+- **Cache Composer** : `quality` et `tests` partagent la même clé ; un seul job l'enregistre, l'autre affiche `Failed to save`, sans effet sur le résultat.
 
 ### 11.3 Runbook (contenu du README)
 
