@@ -7,10 +7,10 @@
 ## Où on en est
 
 - **Phase** : implémentation.
-- **Étape en cours** : aucune (étape 5 faite, non commitée).
+- **Étape en cours** : aucune (étape 5 faite).
 - **Prochaine étape** : 6 — Application.
 - **Bloquants** : aucun.
-- **Dépôt** : GitHub privé `chlie22/leboncoin-test`, remote `origin` en HTTPS, branche `main` ; poussé jusqu'à `851a182`, `fec8e37` (suivi) local.
+- **Dépôt** : GitHub privé `chlie22/leboncoin-test`, remote `origin` en HTTPS, branche `main` ; tout est poussé, étape 5 en `a99355a`.
 - **Dernière mise à jour** : 2026-09-13.
 
 ## Avancement du plan
@@ -24,7 +24,7 @@
 | 2 | Outillage qualité : PHP-CS-Fixer, PHPStan, Deptrac, PHPUnit, Makefile | ✅ fait | 2026-09-13 : `make lint`, `make test` et `make ci` : code 0 ; sondes jetables : 9 violations bloquées, 3 cas autorisés passent, un test en échec fait échouer `make test` ; commit `aac3469` |
 | 3 | Docker : PHP-FPM, Nginx, compose | ✅ fait | 2026-09-13 : `make start` 0 ; `make smoke` 0 en dev et en prod (`make build` 0, `docker compose -f compose.yaml up -d --wait --wait-timeout 60` 0) : 403 JSON sur `/healthz`, 413, 414 JSON avec une URL de 9 Ko, 429 ; 30 rafales de 5 : 3 acceptées à chaque fois ; conteneurs `read_only` et `unless-stopped` ; PHP en échec au démarrage : `up --wait` code 1 ; `make ci` 0 sur l'hôte et avec `EXEC='docker compose exec -T php'` ; commit `9045d1d` |
 | 4 | CI GitHub Actions | ✅ fait | 2026-09-13 : run `34777100094` vert sur `ec154b2` (`gh run watch --exit-status` 0), jobs `quality`, `tests`, `openapi`, `docker` ; logs lus : audit « No security vulnerability advisories found », PHPStan « No errors », smoke « tout est vert » avec les deux 403 ; Deptrac muet en CI, sonde locale `GITHUB_ACTIONS=true` : propre 0, violation 1 avec `::error` ; `actionlint` 1.7.12 0 et `make ci` 0 en local ; Composer 2.10.3 : `make smoke` 0 en dev et en prod, `make ci` 0, `actionlint` 0 ; run `34778415005` vert sur `851a182` (`composer:2.10.3` au build, audit, PHPStan et smoke lus, plus d'avertissement Composer de `setup-php`) |
-| 5 | Domain : `FizzBuzzParameters`, `FizzBuzzGenerator` | ✅ fait | 2026-09-13 : TDD rouge puis vert (`FizzBuzzParametersTest` 10 tests, `FizzBuzzGeneratorTest` 13 : code 2 puis 0) ; sondes `'' !== $term` et `$term ?:` : code 1 sur les cas attendus ; `make ci` 0 relancé hors agent (23 tests, 38 assertions, PHPStan « No errors », Deptrac 0 violation, `lint:container` OK) ; aucun `Symfony` dans `src/FizzBuzz/Domain` ni `tests/Unit/FizzBuzz/Domain` ; revues plan (sound), architecture et `/code-review` sans point bloquant |
+| 5 | Domain : `FizzBuzzParameters`, `FizzBuzzGenerator` | ✅ fait | 2026-09-13 : TDD rouge puis vert (`FizzBuzzParametersTest` 10 tests, `FizzBuzzGeneratorTest` 13 : code 2 puis 0) ; sondes `'' !== $term` et `$term ?:` : code 1 sur les cas attendus ; `make ci` 0 relancé hors agent (23 tests, 38 assertions, PHPStan « No errors », Deptrac 0 violation, `lint:container` OK) ; aucun `Symfony` dans `src/FizzBuzz/Domain` ni `tests/Unit/FizzBuzz/Domain` ; revues plan (sound), architecture et `/code-review` sans point bloquant ; commit `a99355a`, run `34780267928` vert (4 jobs, PHPUnit « OK (23 tests, 38 assertions) » lu) |
 | 6 | Application : port, cas d'usage, mode dégradé, adaptateur en mémoire | ⏳ à faire | — |
 | 7 | Persistance SQLite, pragmas, commande `apply-window` | ⏳ à faire | — |
 | 8 | API : DTO, contrôleurs, `HEAD`, erreurs | ⏳ à faire | — |
