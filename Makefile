@@ -1,6 +1,7 @@
 # Cibles du projet (docs/conception.md §11.1).
 #
 # Les commandes PHP et Composer tournent sur l'hôte par défaut, comme les jobs de la CI.
+# Les cibles ci, lint et test sont reprises par .github/workflows/ci.yaml : modifier les deux ensemble.
 # Pour les exécuter dans le conteneur PHP (étape 3 et suivantes) :
 #   make lint EXEC='docker compose exec -T php'
 # Le lint OpenAPI (npx) tourne toujours sur l'hôte.

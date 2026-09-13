@@ -1200,7 +1200,7 @@ leboncoin-test/
 | `smoke` | smoke test via Nginx |
 | `load-test` | test de charge k6 contre l'image `prod` (§9.4) |
 | `benchmarks` | exécute les scripts de `docs/benchmarks/` (hors CI) |
-| `lint` | PHP-CS-Fixer (dry-run), PHPStan, **Deptrac**, lint du container, lint YAML, lint OpenAPI |
+| `lint` | PHP-CS-Fixer (dry-run), `cache:warmup --env=dev`, lint du container, lint YAML, PHPStan, **Deptrac**, lint OpenAPI |
 | `fix` | PHP-CS-Fixer avec correction |
 | `ci` | `composer validate --strict` + `composer audit` + `lint` + `test` (identique aux jobs `quality`, `tests` et `openapi` de la CI) |
 | `build` | image `prod` : `docker compose -f compose.yaml build php` |
@@ -1212,11 +1212,20 @@ Les commandes PHP et Composer des cibles tournent **sur l'hôte** par défaut, c
 
 | Job | Étapes |
 |---|---|
-| `quality` | setup PHP 8.5 → cache Composer → `composer validate --strict` → `composer audit` → PHP-CS-Fixer → PHPStan → **Deptrac** → `lint:container` → `lint:yaml` |
-| `tests` | `composer install` → migrations de test → PHPUnit (unitaires, contrat, intégration, concurrence, fonctionnels) |
-| `openapi` | `npx @redocly/cli@2.52.1 lint` (configuration `redocly.yaml`) |
-| `docker` | build `prod` → `docker compose -f compose.yaml up -d --wait --wait-timeout 60` (sans la surcharge dev) → `tests/Smoke/smoke.sh` |
+| `quality` | setup PHP 8.5 et Composer 2.9.5 → cache Composer → `composer validate --strict` → `composer install` → `composer audit` → PHP-CS-Fixer → `cache:warmup --env=dev` → `lint:container` → `lint:yaml` → PHPStan → **Deptrac** |
+| `tests` | setup PHP 8.5 → cache Composer → `composer install` → migrations de test (à partir de l'étape 7) → PHPUnit (unitaires, contrat, intégration, concurrence, fonctionnels) |
+| `openapi` | Node 24 → `npx --yes @redocly/cli@2.52.1 lint` (configuration `redocly.yaml`) |
+| `docker` | `docker compose -f compose.yaml build php` → `docker compose -f compose.yaml up -d --wait --wait-timeout 60` (sans la surcharge dev) → `tests/Smoke/smoke.sh` → en cas d'échec, `ps -a` et logs de la stack |
 | `load-test` *(manuel)* | `workflow_dispatch` : build `prod` → quotas relevés → k6 → seuils bloquants (§9.4) |
+
+Fichier `.github/workflows/ci.yaml` (étape 4) :
+
+- **Déclencheurs** : `push` sur `main`, `pull_request`, `workflow_dispatch`, sans filtre de chemins (`docs/openapi.yaml` est sous `docs/`). Un nouveau run sur la même référence annule le précédent (`concurrency`). Le futur job `load-test` aura son propre groupe, pour ne pas annuler un run de push ni être annulé par lui.
+- **Jobs en parallèle**, sur `ubuntu-24.04`, chacun avec un `timeout-minutes` (10, 10, 5 et 15) : le dépôt est privé, les minutes sont décomptées. Permissions réduites à `contents: read`.
+- **Ordre du job `quality`** : celui de la cible `lint` du `Makefile`. `cache:warmup --env=dev` précède PHPStan, qui lit le container XML. `composer audit` suit `composer install` : sans `vendor/`, il affiche « No packages - skipping audit. » et réussit sans rien vérifier **[source]** (Composer 2.9.5, essai du 2026-09-13 sur une copie de `composer.json` et `composer.lock`).
+- **Actions épinglées par SHA de commit**, le tag en commentaire **[source]** (GitHub, relevé le 2026-09-13) : `actions/checkout` v7.0.1, `shivammathur/setup-php` 2.37.2, `actions/setup-node` v7.0.0, `actions/cache` v6.1.0. Mise à jour volontaire, comme les tags des images.
+- **Commandes dupliquées** : les jobs reprennent les commandes des cibles `ci`, `lint` et `test` sans appeler `make`, car `lint` inclut le lint OpenAPI, qui demande Node. Un commentaire dans les deux fichiers rappelle de les modifier ensemble.
+- **Lint du workflow** : `docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.12 -color`, en local et hors CI.
 
 ### 11.3 Runbook (contenu du README)
 

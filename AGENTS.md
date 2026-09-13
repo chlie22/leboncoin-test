@@ -24,6 +24,7 @@ Read before any structural change:
 
 - One plan step per session; tests are written before business code, from Domain outwards (`docs/conception.md` §9.1).
 - Commands: use the Makefile targets (`make help`). They run on the host by default, like CI; optionally, they run inside the PHP container through `EXEC`, for example `make lint EXEC='docker compose exec -T php'`.
+- CI: `.github/workflows/ci.yaml` (jobs `quality`, `tests`, `openapi`, `docker`) repeats the commands of the `ci`, `lint` and `test` Makefile targets: change both together. Actions are pinned by commit SHA; lint the workflow with `docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.12 -color`.
 - Docker: `make start` / `make stop` / `make smoke`. Plain `docker compose` also loads `compose.override.yaml` (dev target, mounted code); drive the production stack with `docker compose -f compose.yaml …` (`make build` builds its image).
 - Discover instead of guessing: `bin/console about`, `debug:container`, `debug:router`, `lint:container`, `lint:yaml config --parse-tags`, and the installed sources under `vendor/`.
 - `.env` is committed and holds defaults only; local overrides go in `.env.local` (git-ignored).

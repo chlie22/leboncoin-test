@@ -1,0 +1,157 @@
+# Intégration continue (docs/conception.md §11.2).
+#
+# Les jobs quality et tests reprennent les commandes des cibles `ci`, `lint` et `test` du Makefile :
+# modifier les deux fichiers ensemble. Le job docker pilote la stack de production avec `-f compose.yaml`,
+# jamais sans : compose.override.yaml basculerait php sur la cible dev.
+# Actions épinglées par SHA de commit, tag en commentaire : les mettre à jour volontairement.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Un nouveau run sur la même référence annule le précédent, devenu obsolète.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PHP_VERSION: '8.5'
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  quality:
+    name: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          coverage: none
+          tools: composer:2.9.5
+
+      - name: Répertoire du cache Composer
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-php${{ env.PHP_VERSION }}-composer-${{ hashFiles('composer.lock') }}
+          restore-keys: ${{ runner.os }}-php${{ env.PHP_VERSION }}-composer-
+
+      - name: composer validate
+        run: composer validate --strict
+
+      - name: composer install
+        run: composer install --no-progress --prefer-dist
+
+      # Après l'installation : sans vendor/, `composer audit` n'a aucun paquet à vérifier et réussit à vide.
+      - name: composer audit
+        run: composer audit
+
+      - name: PHP-CS-Fixer
+        run: vendor/bin/php-cs-fixer check --diff
+
+      # Produit le container XML lu par PHPStan (phpstan.dist.neon).
+      - name: cache:warmup (dev)
+        run: bin/console cache:warmup --env=dev
+
+      - name: lint:container
+        run: bin/console lint:container
+
+      - name: lint:yaml
+        run: bin/console lint:yaml config --parse-tags
+
+      - name: PHPStan
+        run: vendor/bin/phpstan analyse --no-progress
+
+      - name: Deptrac
+        run: vendor/bin/deptrac analyse --fail-on-uncovered --no-progress
+
+  tests:
+    name: tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          coverage: none
+          tools: composer:2.9.5
+
+      - name: Répertoire du cache Composer
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-php${{ env.PHP_VERSION }}-composer-${{ hashFiles('composer.lock') }}
+          restore-keys: ${{ runner.os }}-php${{ env.PHP_VERSION }}-composer-
+
+      - name: composer install
+        run: composer install --no-progress --prefer-dist
+
+      # Les migrations de test s'insèrent ici à l'étape 7.
+      - name: PHPUnit
+        run: vendor/bin/phpunit
+
+  openapi:
+    name: openapi
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Redocly lint
+        run: npx --yes @redocly/cli@2.52.1 lint
+
+  docker:
+    name: docker
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build de l'image prod
+        run: docker compose -f compose.yaml build php
+
+      - name: Démarrage de la stack prod
+        run: docker compose -f compose.yaml up -d --wait --wait-timeout 60
+
+      # Le 403 sur /healthz vérifie le §7.4 : le trafic de l'hôte entre par la passerelle 172.30.0.1,
+      # hors de TRUSTED_PROXY_CIDR. En cas d'échec, revoir le réseau avant de toucher au test.
+      - name: Smoke test via Nginx
+        run: tests/Smoke/smoke.sh
+
+      - name: État et logs de la stack
+        if: failure()
+        run: |
+          docker compose -f compose.yaml ps -a
+          docker compose -f compose.yaml logs --no-color

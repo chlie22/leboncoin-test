@@ -44,7 +44,11 @@ make test-unit                                          # aussi test-integration
 make benchmarks                                         # scripts de docs/benchmarks/ : plusieurs minutes, ~1 Go de disque, hors CI
 vendor/bin/phpunit tests/Unit/FizzBuzz/Domain/FizzBuzzGeneratorTest.php --filter nomDuTest   # un seul test
 php docs/benchmarks/02-fenetre-exactitude.php           # exactitude du SQL de fenêtre ; code de sortie ≠ 0 en cas d'écart
+docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.12 -color   # lint de .github/workflows/ avant de pousser
+gh run watch <id> --exit-status                         # suivre un run de la CI ; code ≠ 0 si un job échoue
 ```
+
+CI (étape 4) : `.github/workflows/ci.yaml`, jobs `quality`, `tests`, `openapi`, `docker` (§11.2). Ils reprennent les commandes des cibles `ci`, `lint` et `test` : modifier le `Makefile` et le workflow ensemble.
 
 Stack Docker (étape 3). Sans `-f`, `docker compose` charge aussi `compose.override.yaml` : cible `dev`, code monté, `www-data` à l'UID de l'hôte (exporté par le `Makefile`). La prod se pilote avec `docker compose -f compose.yaml …`.
 

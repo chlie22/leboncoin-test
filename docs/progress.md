@@ -7,10 +7,10 @@
 ## Où on en est
 
 - **Phase** : implémentation.
-- **Étape en cours** : aucune (étape 3 faite, revue d'architecture sans point bloquant ; `/code-review` et commit à décider par le développeur).
-- **Prochaine étape** : 4 — CI GitHub Actions.
+- **Étape en cours** : 4 — CI GitHub Actions.
+- **Prochaine étape** : 5 — Domain.
 - **Bloquants** : aucun.
-- **Dépôt** : GitHub privé `chlie22/leboncoin-test`, remote `origin` en HTTPS, branche `main` ; `aac3469` (étape 2) non poussé, à pousser avec l'étape 3.
+- **Dépôt** : GitHub privé `chlie22/leboncoin-test`, remote `origin` en HTTPS, branche `main` ; `aac3469` (étape 2) et `9045d1d` (étape 3) non poussés, à pousser avec le commit de la CI (choix du développeur).
 - **Dernière mise à jour** : 2026-09-13.
 
 ## Avancement du plan
@@ -22,8 +22,8 @@
 | 0 | Contrat OpenAPI, validation de la spec | ✅ fait | `npx --yes @redocly/cli@2.52.1 lint` : code 0 (relancé le 2026-09-13) ; review R01 à R12 intégrée |
 | 1 | Squelette Symfony 8.1, `git init` | ✅ fait | `bin/console about`, `lint:container`, `lint:yaml`, `composer validate --strict` : code 0 (relancés le 2026-09-13) ; commit `8246597` |
 | 2 | Outillage qualité : PHP-CS-Fixer, PHPStan, Deptrac, PHPUnit, Makefile | ✅ fait | 2026-09-13 : `make lint`, `make test` et `make ci` : code 0 ; sondes jetables : 9 violations bloquées, 3 cas autorisés passent, un test en échec fait échouer `make test` ; commit `aac3469` |
-| 3 | Docker : PHP-FPM, Nginx, compose | ✅ fait | 2026-09-13 : `make start` 0 ; `make smoke` 0 en dev et en prod (`make build` 0, `docker compose -f compose.yaml up -d --wait --wait-timeout 60` 0) : 403 JSON sur `/healthz`, 413, 414 JSON avec une URL de 9 Ko, 429 ; 30 rafales de 5 : 3 acceptées à chaque fois ; conteneurs `read_only` et `unless-stopped` ; PHP en échec au démarrage : `up --wait` code 1 ; `make ci` 0 sur l'hôte et avec `EXEC='docker compose exec -T php'` |
-| 4 | CI GitHub Actions | ⏳ à faire | — |
+| 3 | Docker : PHP-FPM, Nginx, compose | ✅ fait | 2026-09-13 : `make start` 0 ; `make smoke` 0 en dev et en prod (`make build` 0, `docker compose -f compose.yaml up -d --wait --wait-timeout 60` 0) : 403 JSON sur `/healthz`, 413, 414 JSON avec une URL de 9 Ko, 429 ; 30 rafales de 5 : 3 acceptées à chaque fois ; conteneurs `read_only` et `unless-stopped` ; PHP en échec au démarrage : `up --wait` code 1 ; `make ci` 0 sur l'hôte et avec `EXEC='docker compose exec -T php'` ; commit `9045d1d` |
+| 4 | CI GitHub Actions | 🚧 en cours | — |
 | 5 | Domain : `FizzBuzzParameters`, `FizzBuzzGenerator` | ⏳ à faire | — |
 | 6 | Application : port, cas d'usage, mode dégradé, adaptateur en mémoire | ⏳ à faire | — |
 | 7 | Persistance SQLite, pragmas, commande `apply-window` | ⏳ à faire | — |
@@ -60,6 +60,7 @@ Statuts : ⏳ à faire · 🚧 en cours · ✅ fait · ⛔ bloqué. Une étape n
 - **2026-09-13** — Docker (choix du développeur) : pas de `HEALTHCHECK` avant l'étape 9 ; `compose.yaml` prod + `compose.override.yaml` dev (volumes `php-var` et `stats-data-dev`, `www-data` à l'UID/GID de l'hôte) ; smoke dès l'étape 3 ; tags figés ; `restart: unless-stopped` et `--wait-timeout 60`. §7.2, §7.6, §7.7, §10, §11.1, §11.2.
 - **2026-09-13** — Réseau Compose `172.30.0.0/24`, `TRUSTED_PROXY_CIDR` = `ip_range` `172.30.0.128/25` ; conteneurs `read_only` (tmpfs PHP `/tmp`, `var/share`, `var/log` à l'uid 33 ; Nginx `/tmp`, `conf.d`). §7.4, §7.6, §7.7.
 - **2026-09-13** — Nginx : zone `per_ip` en dernier (course sur les zones non finales) ; `large_client_header_buffers 4 8k` ; FPM `access.log = /dev/null`. §7.3, §7.4, §7.5.
+- **2026-09-13** — CI (choix du développeur) : `push` sur `main`, `pull_request` et `workflow_dispatch`, sans filtre de chemins ; actions épinglées par SHA ; push direct sur `main` ; `actionlint` en local via Docker, hors CI et hors Makefile. Jobs parallèles sur `ubuntu-24.04` avec `timeout-minutes` ; `composer audit` après `install` (sans `vendor/`, il réussit à vide) ; commandes dupliquées du Makefile, avec un commentaire croisé. §11.1, §11.2.
 - **2026-09-13** — Choix du développeur : 400 (en-tête > 8 Ko) et 404 (`/_errors/*`) de Nginx restent en HTML, exception au §4.4 ; **Q15 élargie** : paramètres tolérés dans le log d'erreur Nginx aussi pour les 403 et 413. §4.4, §7.9, §8.1, §9.1, §11.3, §13, §15.6.
 
 ## Journal des sessions
