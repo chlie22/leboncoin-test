@@ -1,0 +1,23 @@
+includes:
+    - vendor/phpstan/phpstan-symfony/extension.neon
+    - vendor/phpstan/phpstan-symfony/rules.neon
+
+parameters:
+    level: max
+    paths:
+        - config
+        - src
+        - tests
+    excludePaths:
+        - config/reference.php
+    tmpDir: var/cache/phpstan
+    ignoreErrors:
+        # False positive: KernelTrait calls $this->getAllowedEnvs() (symfony/dependency-injection 8.1),
+        # and the method of the class wins over the trait's. Checked with APP_ENV=foo bin/console about.
+        -
+            identifier: method.unused
+            message: '#^Method App\\Kernel::getAllowedEnvs\(\) is unused\.$#'
+            path: src/Kernel.php
+    symfony:
+        # Produced by `bin/console cache:warmup --env=dev`, run by `make lint` before PHPStan.
+        containerXmlPath: var/cache/dev/App_KernelDevDebugContainer.xml

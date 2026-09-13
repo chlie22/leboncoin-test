@@ -32,23 +32,21 @@ La spec pèse ~26 000 tokens : n'en lire que les sections utiles, repérées ave
 
 ## Commandes
 
-Disponibles dès maintenant, depuis la racine du dépôt :
+Disponibles dès maintenant, depuis la racine du dépôt. Les commandes PHP tournent sur l'hôte par défaut ; à partir de l'étape 3, `EXEC='docker compose exec -T php'` les fait passer par le conteneur (§11.1).
 
 ```bash
-bin/console about                                       # squelette Symfony, exécuté sur l'hôte jusqu'à l'étape 3
-bin/console lint:container && bin/console lint:yaml config --parse-tags
-composer validate --strict
-npx --yes @redocly/cli@2.52.1 lint                      # lint du contrat (configuration redocly.yaml)
+make help                                               # liste des cibles
+make ci                                                 # composer validate + audit, lint, test : la vérification complète
+make lint                                               # PHP-CS-Fixer (dry-run), cache:warmup, lint:container, lint:yaml, PHPStan max, Deptrac --fail-on-uncovered, Redocly
+make fix                                                # PHP-CS-Fixer avec correction
+make test                                               # toute la suite PHPUnit
+make test-unit                                          # aussi test-integration, test-functional ; code 1 tant que la suite est vide
+make benchmarks                                         # scripts de docs/benchmarks/ : plusieurs minutes, ~1 Go de disque, hors CI
+vendor/bin/phpunit tests/Unit/FizzBuzz/Domain/FizzBuzzGeneratorTest.php --filter nomDuTest   # un seul test
 php docs/benchmarks/02-fenetre-exactitude.php           # exactitude du SQL de fenêtre ; code de sortie ≠ 0 en cas d'écart
-php docs/benchmarks/03-json-reponse.php                 # taille et mémoire de la réponse JSON
-php -d memory_limit=1G docs/benchmarks/01-stockage.php  # plusieurs minutes, ~1 Go de disque temporaire
 ```
 
-Prévues par la spec (§11), créées aux étapes 2 et 3. Avant de s'en servir, vérifier dans `docs/progress.md` que l'étape correspondante est faite.
-
-- `make start` / `make stop` (Docker Compose), `make test`, `make test-unit` / `make test-integration` / `make test-functional`, `make smoke`, `make load-test`, `make ci`.
-- `make lint` : PHP-CS-Fixer, PHPStan niveau max, Deptrac, `lint:container`, `lint:yaml`, Redocly. `make fix` pour corriger le style.
-- Un seul test, dans le conteneur PHP : `docker compose exec php vendor/bin/phpunit tests/Unit/FizzBuzz/Domain/FizzBuzzGeneratorTest.php --filter nomDuTest`.
+Prévues par la spec (§11.1), créées aux étapes 3, 7, 9 et 9b. Avant de s'en servir, vérifier dans `docs/progress.md` que l'étape correspondante est faite : `make start` / `make stop` (Docker Compose), `make sh`, `make logs`, `make build`, `make migrate`, `make stats-reset`, `make smoke`, `make load-test`.
 
 ## Architecture
 

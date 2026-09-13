@@ -83,6 +83,7 @@ A new class goes into an existing directory of this tree. A new directory is a d
 deptrac:
   paths:
     - ./src
+  cache_file: var/cache/.deptrac.cache
   layers:
     - name: Domain
       collectors:
@@ -103,7 +104,7 @@ deptrac:
     - name: PsrLog
       collectors:
         - type: classLike
-          value: ^Psr.Log.*
+          value: ^Psr.Log.LoggerInterface$
     - name: Framework
       collectors:
         - type: classLike
@@ -112,6 +113,9 @@ deptrac:
           value: ^Doctrine.*
         - type: classLike
           value: ^Monolog.*
+        # Every PSR interface except LoggerInterface, which belongs to PsrLog only.
+        - type: classLike
+          value: ^Psr.(?!Log.LoggerInterface$).*
   ruleset:
     Domain: ~
     Application:

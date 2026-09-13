@@ -372,7 +372,8 @@ Le schéma montre les **dépendances de code**, pas l'ordre des appels.
 |---|---|---|
 | `Domain` | rien (PHP pur) | Symfony, Doctrine, HTTP, `Application`, `Infrastructure` |
 | `Application` | `Domain`, interface PSR-3 `LoggerInterface` (un standard, pas le framework) | Symfony, Doctrine, HTTP, `Infrastructure` |
-| `Infrastructure` | `Application`, `Domain`, Symfony, Doctrine | — |
+| `Infrastructure` | `Application`, `Domain`, Symfony, Doctrine | `Shared` |
+| `Shared` (`src/Shared/Infrastructure/`) | Symfony, Doctrine DBAL, Monolog, interfaces PSR | `Domain`, `Application`, `Infrastructure` de `src/FizzBuzz/` |
 
 Ces règles sont **vérifiées en CI par Deptrac** : une violation fait échouer le pipeline.
 
@@ -1027,7 +1028,7 @@ Base de test : `DATABASE_URL` défini dans `.env.test`, tables vidées dans `set
 
 | Outil | Réglage |
 |---|---|
-| **Deptrac** (`deptrac/deptrac` 4.7) | couches `Domain`, `Application`, `Infrastructure` ; règles du §5.2 ; seule dépendance externe autorisée dans `Application` : `Psr\Log\LoggerInterface` ; échec de la CI en cas de violation |
+| **Deptrac** (`deptrac/deptrac` 4.7) | couches `Domain`, `Application`, `Infrastructure`, plus `Shared` (`src/Shared/`, qui ne dépend jamais du code de `src/FizzBuzz/`) ; règles du §5.2 ; seule dépendance externe autorisée dans `Application` : `Psr\Log\LoggerInterface` ; `--fail-on-uncovered` : une dépendance vers une classe hors de toute couche échoue, sauf les classes internes de PHP ; échec de la CI en cas de violation |
 | PHPStan 2 + `phpstan/phpstan-symfony` | niveau `max` |
 | PHP-CS-Fixer | `@Symfony` + `@PER-CS`, `declare(strict_types=1)` |
 | `composer validate --strict` + `composer audit` | CI |
@@ -1041,6 +1042,8 @@ Base de test : `DATABASE_URL` défini dans `.env.test`, tables vidées dans `set
 **Dev** : `phpunit/phpunit` 13, `symfony/browser-kit`, `phpstan/phpstan`, `phpstan/phpstan-symfony`, `friendsofphp/php-cs-fixer`, `deptrac/deptrac`.
 
 Versions relevées sur Packagist le 2026-09-11 : `symfony/framework-bundle` 8.1.6, `doctrine/doctrine-bundle` 3.3, `doctrine/doctrine-migrations-bundle` 4.0, `phpunit/phpunit` 13.3, `phpstan/phpstan` 2.2, `deptrac/deptrac` 4.7.1.
+
+Chaque paquet est installé à l'étape du plan qui s'en sert (§12). **[source]** `composer show`, 2026-09-13 : à l'étape 2, `phpunit/phpunit` 13.3.3, `phpstan/phpstan` 2.2.14, `phpstan/phpstan-symfony` 2.0.20, `friendsofphp/php-cs-fixer` 3.95.25 et `deptrac/deptrac` 4.7.1. `symfony/browser-kit` arrive à l'étape 8, avec les premiers `WebTestCase`.
 
 ### 9.4 Test de charge (k6) — à réaliser
 
@@ -1174,7 +1177,7 @@ leboncoin-test/
 | Cible | Action |
 |---|---|
 | `help` | liste des cibles (par défaut) |
-| `install` | `composer install` dans le conteneur |
+| `install` | `composer install` |
 | `start` / `stop` | `docker compose up -d --wait` / `down` (le volume de données est conservé) |
 | `sh` / `logs` | shell PHP / logs des services |
 | `migrate` | migrations explicites |
@@ -1185,9 +1188,11 @@ leboncoin-test/
 | `benchmarks` | exécute les scripts de `docs/benchmarks/` (hors CI) |
 | `lint` | PHP-CS-Fixer (dry-run), PHPStan, **Deptrac**, lint du container, lint YAML, lint OpenAPI |
 | `fix` | PHP-CS-Fixer avec correction |
-| `ci` | `lint` + `test` (identique à la CI) |
+| `ci` | `composer validate --strict` + `composer audit` + `lint` + `test` (identique aux jobs `quality`, `tests` et `openapi` de la CI) |
 | `build` | image `prod` |
 | `stats-reset` | vide les deux tables de statistiques, après confirmation interactive |
+
+Les commandes PHP et Composer des cibles tournent **sur l'hôte** par défaut, comme les jobs `quality` et `tests` de la CI (§11.2). La variable `EXEC`, vide par défaut, les fait passer par le conteneur : `make lint EXEC='docker compose exec -T php'`. Le lint OpenAPI (`npx`) tourne toujours sur l'hôte. Les cibles arrivent avec l'étape qui les rend utiles : `start`, `stop`, `sh`, `logs` et `build` à l'étape 3, `migrate` et `stats-reset` à l'étape 7, `smoke` à l'étape 9 et `load-test` à l'étape 9b.
 
 ### 11.2 CI GitHub Actions
 

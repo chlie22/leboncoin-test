@@ -22,8 +22,8 @@ Delete test: if `src/FizzBuzz/Infrastructure/` and `src/Shared/` disappeared, Do
 |---|---|---|---|
 | Domain `src/FizzBuzz/Domain/` | value object `FizzBuzzParameters`, domain service `FizzBuzzGenerator`, domain exceptions | PHP only | Symfony, Doctrine, Application, Infrastructure |
 | Application `src/FizzBuzz/Application/` | use cases, outbound port `Port/RequestStatisticsStore`, read model `Model/RequestStatistics`, application exceptions | Domain, `Psr\Log\LoggerInterface` | Symfony, Doctrine, Infrastructure |
-| Infrastructure `src/FizzBuzz/Infrastructure/` | HTTP adapters `Api/`, SQLite adapter `Persistence/`, console commands `Cli/` | Application, Domain, Symfony, Doctrine DBAL | — |
-| Shared infrastructure `src/Shared/Infrastructure/` | health check, JSON error format, request-id log processor | Symfony, Doctrine DBAL | business code of `src/FizzBuzz/` |
+| Infrastructure `src/FizzBuzz/Infrastructure/` | HTTP adapters `Api/`, SQLite adapter `Persistence/`, console commands `Cli/` | Application, Domain, Symfony, Doctrine DBAL | Shared |
+| Shared infrastructure `src/Shared/Infrastructure/` | health check, JSON error format, request-id log processor | Symfony, Doctrine DBAL, Monolog, PSR interfaces | business code of `src/FizzBuzz/` |
 
 ## Decisions already made
 

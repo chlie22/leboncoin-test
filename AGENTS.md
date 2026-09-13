@@ -23,10 +23,10 @@ Read before any structural change:
 ## Workflow
 
 - One plan step per session; tests are written before business code, from Domain outwards (`docs/conception.md` §9.1).
-- Commands: `bin/console` runs on the host until the Docker step (§12, step 3) is done; after that, use the Makefile targets and run commands inside the PHP container.
+- Commands: use the Makefile targets (`make help`). They run on the host by default, like CI; from the Docker step (§12, step 3) on, prefix them with the PHP container through `EXEC`, for example `make lint EXEC='docker compose exec -T php'`.
 - Discover instead of guessing: `bin/console about`, `debug:container`, `debug:router`, `lint:container`, `lint:yaml config --parse-tags`, and the installed sources under `vendor/`.
 - `.env` is committed and holds defaults only; local overrides go in `.env.local` (git-ignored).
-- Never commit unless the developer asks; never push.
+- Never commit or push unless the developer asks. Push over HTTPS (`origin`).
 
 ## Languages
 

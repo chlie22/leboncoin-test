@@ -67,5 +67,12 @@
         }
     },
     "name": "leboncoin-test/fizzbuzz-api",
-    "description": "API REST FizzBuzz avec endpoint de statistiques (test technique leboncoin)"
+    "description": "API REST FizzBuzz avec endpoint de statistiques (test technique leboncoin)",
+    "require-dev": {
+        "deptrac/deptrac": "^4.7",
+        "friendsofphp/php-cs-fixer": "^3.95",
+        "phpstan/phpstan": "^2.2",
+        "phpstan/phpstan-symfony": "^2.0",
+        "phpunit/phpunit": "^13.3"
+    }
 }
