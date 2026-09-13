@@ -7,10 +7,10 @@
 ## Où on en est
 
 - **Phase** : implémentation.
-- **Étape en cours** : aucune (étape 7 faite, **non commitée** : commit à valider par le développeur, puis push et preuve CI).
+- **Étape en cours** : aucune (étape 7 faite).
 - **Prochaine étape** : 8 — API.
 - **Bloquants** : aucun.
-- **Dépôt** : GitHub privé `chlie22/leboncoin-test`, remote `origin` en HTTPS, branche `main` ; poussé jusqu'à `7b7e97f`.
+- **Dépôt** : GitHub privé `chlie22/leboncoin-test`, remote `origin` en HTTPS, branche `main` ; tout est poussé, étape 7 en `af00927`.
 - **Dernière mise à jour** : 2026-09-14.
 
 ## Avancement du plan
@@ -26,7 +26,7 @@
 | 4 | CI GitHub Actions | ✅ fait | 2026-09-13 : runs `34777100094` (`ec154b2`) et `34778415005` (`851a182`) verts, 4 jobs, logs lus ; `actionlint` 0 ; Composer 2.10.3 |
 | 5 | Domain : `FizzBuzzParameters`, `FizzBuzzGenerator` | ✅ fait | 2026-09-13 : TDD rouge (2) puis vert (0), 23 tests ; sondes détectées ; `make ci` 0 ; revues sans bloquant ; commit `a99355a`, run `34780267928` vert |
 | 6 | Application : port, cas d'usage, mode dégradé, adaptateur en mémoire | ✅ fait | 2026-09-13 : TDD rouge (2) puis vert (0) ; 8 sondes de mutation détectées ; `make ci` 0 (58 tests, 325 assertions) ; revues sans bloquant ; commit `9f6a2da`, run `34782724339` vert |
-| 7 | Persistance SQLite, pragmas, commande `apply-window` | ✅ fait | 2026-09-14 : TDD intégration rouge (2) puis vert (0) ; sondes de mutation 7/9 détectées (survivants attendus : `threshold <= 0` équivalent, `BEGIN` au lieu de `BEGIN IMMEDIATE` non observable) ; Deptrac : `\PDO`/`SQLite3` (3 violations) et ORM/Migrations (2 non couverts) code 1 ; `02-fenetre-exactitude.php` 0 (0 écart) ; `actionlint` 0 ; `make build` 0 ; prod `up --wait` 0 + `make smoke` 0 (logs : 2 migrations puis fenêtre, `journal_mode` wal) ; dev (image reconstruite) `make start` 0 + `make smoke` 0 ; volume en lecture seule : `up --wait` 1 ; `STATS_WINDOW_SIZE=1.5` : boucle de redémarrage, message explicite ; revue de plan (4 bloquants corrigés), d'architecture sans bloquant, `/code-review` : 1 défaut (COMMIT en BUSY laissant la transaction ouverte) corrigé en TDD (1 puis 0) ; `make fix` 0 et `make ci` 0 (127 tests, 987 assertions, PHPStan « No errors », Deptrac 0/0) ; non commité |
+| 7 | Persistance SQLite, pragmas, commande `apply-window` | ✅ fait | 2026-09-14 : TDD intégration rouge (2) puis vert (0) ; sondes de mutation 7/9 détectées (survivants attendus : `threshold <= 0` équivalent, `BEGIN` au lieu de `BEGIN IMMEDIATE` non observable) ; Deptrac : `\PDO`/`SQLite3` (3 violations) et ORM/Migrations (2 non couverts) code 1 ; `02-fenetre-exactitude.php` 0 (0 écart) ; `actionlint` 0 ; `make build` 0 ; prod `up --wait` 0 + `make smoke` 0 (logs : 2 migrations puis fenêtre, `journal_mode` wal) ; dev (image reconstruite) `make start` 0 + `make smoke` 0 ; volume en lecture seule : `up --wait` 1 ; `STATS_WINDOW_SIZE=1.5` : boucle de redémarrage, message explicite ; revue de plan (4 bloquants corrigés), d'architecture sans bloquant, `/code-review` : 1 défaut (COMMIT en BUSY laissant la transaction ouverte) corrigé en TDD (1 puis 0) ; `make fix` 0 et `make ci` 0 (127 tests, 987 assertions, PHPStan « No errors », Deptrac 0/0) ; commit `af00927`, run `34786638347` vert (4 jobs ; logs lus : `pdo_sqlite` activé, « Migrations de test » jusqu'à `Version20260912000002`, PHPUnit « OK (127 tests, 986 assertions) », audit sans avis, PHPStan « No errors », smoke « tout est vert ») |
 | 8 | API : DTO, contrôleurs, `HEAD`, erreurs | ⏳ à faire | — |
 | 9 | `/healthz`, logs corrélés, OPcache, smoke test | ⏳ à faire | — |
 | 9b | Test de charge k6 | ⏳ à faire | — |
@@ -35,8 +35,6 @@
 Statuts : ⏳ à faire · 🚧 en cours · ✅ fait · ⛔ bloqué. Une étape n'est ✅ qu'avec une **preuve** (commande et code de sortie, ou hash du commit).
 
 ## Prochaine action
-
-**D'abord** : commit de l'étape 7 (message proposé en fin de session), push, lecture du run CI (job `tests` : étape « Migrations de test », `pdo_sqlite`, 127 tests), preuve reportée ici.
 
 **Étape 8** : API : `GenerateFizzBuzzQuery` (`#[MapQueryString]`), contrôleurs, `HEAD`, encodage JSON, traduction des exceptions ; matrice du §3.3 verte, Deptrac vert.
 
@@ -66,7 +64,7 @@ Statuts : ⏳ à faire · 🚧 en cours · ✅ fait · ⛔ bloqué. Une étape n
 
 ## Journal des sessions
 
-- **2026-09-14 (nuit)** — Étape 7 faite, non commitée : 4 décisions du développeur, plan relu deux fois (disque plein masqué par `transactional()`), TDD par `tdd-implementer` (1er essai coupé par la limite de dépenses), vérifications Docker (image dev à reconstruire), revue d'architecture sans bloquant, `/code-review` : COMMIT en BUSY corrigé en TDD ; docs synchronisées. Prochaine action : commit, CI, étape 8.
+- **2026-09-14 (nuit)** — Étape 7 faite : 4 décisions du développeur, plan relu deux fois (disque plein masqué par `transactional()`), TDD par `tdd-implementer` (1er essai coupé par la limite de dépenses), vérifications Docker (image dev à reconstruire), revue d'architecture sans bloquant, `/code-review` : COMMIT en BUSY corrigé en TDD ; docs synchronisées ; `af00927` poussé, run `34786638347` vert. Nombre d'assertions non constant (987 en local, 986 en CI, cause non recherchée). Prochaine étape : 8.
 - **2026-09-13 (nuit, suite)** — Étape 6 faite : 4 décisions tranchées, plan relu (1 bloquant corrigé), TDD avec sondes, `make ci` 0, revues sans bloquant. Prochaine étape : 7.
 - **2026-09-13 (fin de soirée)** — Étape 5 faite : plan relu puis ajusté, TDD, `make ci` 0, revues sans point. Prochaine étape : 6.
 - **2026-09-13 (nuit)** — Étape 4 faite : workflow CI, revues sans bug, run `34777100094` vert. Composer passé en 2.10.3. Prochaine étape : 5.
