@@ -96,6 +96,7 @@ jobs:
           php-version: ${{ env.PHP_VERSION }}
           coverage: none
           tools: composer:2.10.3
+          extensions: pdo_sqlite
 
       - name: Répertoire du cache Composer
         id: composer-cache
@@ -110,7 +111,10 @@ jobs:
       - name: composer install
         run: composer install --no-progress --prefer-dist
 
-      # Les migrations de test s'insèrent ici à l'étape 7.
+      # Cible test-db du Makefile : base SQLite de test (DATABASE_URL de .env.test).
+      - name: Migrations de test
+        run: bin/console doctrine:migrations:migrate --no-interaction --env=test
+
       - name: PHPUnit
         run: vendor/bin/phpunit
 

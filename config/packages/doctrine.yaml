@@ -1,0 +1,8 @@
+# Doctrine DBAL only, no ORM (docs/conception.md §5.3, §6.5).
+# Connection middlewares (EnableForeignKeys, SqliteConnectionPragmas) are services autoconfigured
+# with the doctrine.middleware tag: see config/services.yaml.
+doctrine:
+    dbal:
+        url: '%env(resolve:DATABASE_URL)%'
+        # In debug, DoctrineBundle would log every statement with its bound values, str1 and str2 included (§8.1).
+        logging: false

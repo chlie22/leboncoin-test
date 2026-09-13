@@ -5,6 +5,7 @@ declare(strict_types=1);
 $finder = (new PhpCsFixer\Finder())
     ->in([
         __DIR__.'/config',
+        __DIR__.'/migrations',
         __DIR__.'/public',
         __DIR__.'/src',
         __DIR__.'/tests',

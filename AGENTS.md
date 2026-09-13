@@ -23,7 +23,10 @@ Read before any structural change:
 ## Workflow
 
 - One plan step per session; tests are written before business code, from Domain outwards (`docs/conception.md` §9.1).
-- Commands: use the Makefile targets (`make help`). They run on the host by default, like CI; optionally, they run inside the PHP container through `EXEC`, for example `make lint EXEC='docker compose exec -T php'`.
+- Commands: use the Makefile targets (`make help`).
+  - They run on the host by default, like CI; optionally, they run inside the PHP container through `EXEC`, for example `make lint EXEC='docker compose exec -T php'`.
+  - Exception: `make migrate` and `make stats-reset` target the stack's database, so they run in the PHP container by default.
+  - `make test` first migrates the SQLite test database `var/test.db` (`make test-db`). Run `make test-db` before calling `vendor/bin/phpunit` directly on a fresh clone.
 - CI: `.github/workflows/ci.yaml` (jobs `quality`, `tests`, `openapi`, `docker`) repeats the commands of the `ci`, `lint` and `test` Makefile targets: change both together. Actions are pinned by commit SHA; lint the workflow with `docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.12 -color`.
 - Docker: `make start` / `make stop` / `make smoke`. Plain `docker compose` also loads `compose.override.yaml` (dev target, mounted code); drive the production stack with `docker compose -f compose.yaml …` (`make build` builds its image).
 - Discover instead of guessing: `bin/console about`, `debug:container`, `debug:router`, `lint:container`, `lint:yaml config --parse-tags`, and the installed sources under `vendor/`.

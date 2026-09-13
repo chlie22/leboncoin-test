@@ -374,7 +374,7 @@ Le schéma montre les **dépendances de code**, pas l'ordre des appels.
 |---|---|---|
 | `Domain` | rien (PHP pur) | Symfony, Doctrine, HTTP, `Application`, `Infrastructure` |
 | `Application` | `Domain`, interface PSR-3 `LoggerInterface` (un standard, pas le framework) | Symfony, Doctrine, HTTP, `Infrastructure` |
-| `Infrastructure` | `Application`, `Domain`, Symfony, Doctrine | `Shared` |
+| `Infrastructure` | `Application`, `Domain`, Symfony, Doctrine DBAL | `Shared` ; Doctrine ORM et Migrations ; `PDO`, `Pdo\Sqlite` ou `SQLite3` en direct |
 | `Shared` (`src/Shared/Infrastructure/`) | Symfony, Doctrine DBAL, Monolog, interfaces PSR | `Domain`, `Application`, `Infrastructure` de `src/FizzBuzz/` |
 
 Ces règles sont **vérifiées en CI par Deptrac** : une violation fait échouer le pipeline.
@@ -557,6 +557,8 @@ Les plafonds opérationnels (10 000, 50) relèvent de l'adaptateur HTTP : ce son
 
 Le mode dégradé **ne garantit donc pas** un 200 dans tous les cas : il couvre les échecs détectés, pas une lenteur d'entrées-sorties prolongée.
 
+**Pannes traduites en `StatisticsStoreUnavailable`** par l'adaptateur SQLite, d'après le code résultat SQLite primaire (`code & 0xFF`, qui couvre aussi les codes étendus) : `PERM` 3, `BUSY` 5, `READONLY` 8, `IOERR` 10, `CORRUPT` 11, `FULL` 13, `CANTOPEN` 14, `PROTOCOL` 15 (échec transitoire de verrou WAL), `NOTADB` 26. Les autres codes sont des erreurs de programmation et se propagent : `ERROR` 1 (syntaxe, table absente), `LOCKED` 6 (conflit au sein d'une même connexion), `CONSTRAINT` 19, etc. Le tri se fait par code et non par classe d'exception DBAL : le convertisseur SQLite de DBAL classe d'après des sous-chaînes du message, et range disque plein et erreurs d'entrées-sorties dans la classe générique `DriverException` **[source]** (`Driver\API\SQLite\ExceptionConverter`, DBAL 4.4.4). Sous PDO, le code de l'exception DBAL est le code résultat SQLite : sondes du 2026-09-13, verrou 5, lecture seule 8, fichier impossible à ouvrir 14 **[source]**.
+
 **Capacité pendant une contention** **[hypothèse]** : si chaque requête attend les 200 ms complets, environ 2 processus PHP-FPM restent occupés en moyenne au débit maximal de 10 req/s. Ce calcul ne couvre ni la lenteur d'entrées-sorties ni les requêtes qui partagent le même disque ; il reste à confirmer par un test de charge avec contention injectée (§9.1).
 
 #### « Journaliser » : un signal d'exploitation, pas une sauvegarde des appels
@@ -645,7 +647,7 @@ DELETE FROM fizzbuzz_request_log WHERE id <= :threshold;
 DELETE FROM fizzbuzz_request_stat WHERE hits = 0;
 ```
 
-Exécutée dans `Connection::transactional()` de DBAL. Toutes les valeurs sont des **paramètres liés**, jamais concaténées.
+Exécutée dans une transaction DBAL **écrite à la main**, et non dans `Connection::transactional()`. La transaction s'ouvre avant le bloc protégé. En cas d'erreur, l'adaptateur appelle `rollBack()` si DBAL compte encore une transaction, et envoie sinon un `ROLLBACK` brut. Un échec de ce rollback est ignoré, et c'est l'erreur d'origine qui est traduite. Le `ROLLBACK` brut couvre un `COMMIT` en échec : DBAL considère alors la transaction terminée, alors que SQLite la garde ouverte après `SQLITE_BUSY`. Sans lui, l'appel suivant sur la même connexion échouerait avec « There is already an active transaction » (code 0, non traduit) **[source]** (DBAL 4.4.4 `Connection::commit()` ; sonde du 2026-09-14 en journal de rollback ; test `testACommitFailingWithBusyLeavesNoTransactionOpen`). Raison : quand SQLite annule lui-même toute la transaction (`RAISE(ROLLBACK)` dans un trigger, certaines erreurs `SQLITE_FULL`), `transactional()` appelle quand même `rollBack()`. Ce rollback lève « There is no active transaction » (code 0) **à la place** de l'erreur d'origine, et le mode dégradé ne se déclencherait plus **[source]** (sondes du 2026-09-13, DBAL 4.4.4, SQLite 3.51.2 ; cas `RAISE(ROLLBACK)` de `SqliteRequestStatisticsStoreTest`). Toutes les valeurs sont des **paramètres liés**, jamais concaténées.
 
 - **Pourquoi l'ordre compte** **[source]** (documentation SQLite) : dans une transaction `BEGIN` classique, si la première instruction est une **lecture**, le passage en écriture peut échouer immédiatement avec `SQLITE_BUSY` quand un autre processus écrit. L'UPSERT est donc **toujours** la première instruction ; la lecture du seuil (étape 3) a lieu une fois le verrou d'écriture acquis.
 - **Incrément avant éviction** : si la même combinaison entre et sort dans la même transaction, les deux opérations se compensent, y compris avec N = 1.
@@ -692,10 +694,10 @@ LIMIT 1;
 | `journal_size_limit` | 64 Mo | après un checkpoint, le fichier WAL est ramené à cette taille au lieu de conserver son maximum historique |
 | Clés étrangères | middleware DBAL `EnableForeignKeys` | intégrité journal → combinaisons |
 | Réglages par connexion | middleware DBAL `SqliteConnectionPragmas` | `busy_timeout`, `synchronous` et `journal_size_limit` **ne sont pas persistés** dans le fichier : ils sont appliqués à chaque connexion |
-| Taille de fenêtre | `STATS_WINDOW_SIZE` via `%env(int:STATS_WINDOW_SIZE)%` ; entier ≥ 1 vérifié par le constructeur de l'adaptateur | une valeur invalide produit une erreur explicite au démarrage (§6.6) |
+| Taille de fenêtre | `STATS_WINDOW_SIZE`, lue brute (`%env(STATS_WINDOW_SIZE)%`) par la fabrique `SqliteRequestStatisticsStore::withConfiguredWindowSize()` : seul un entier décimal ≥ 1 est accepté (`^[1-9][0-9]*$`, sans dépassement) | une valeur invalide fait échouer le démarrage (§6.6). `%env(int:…)%` est écarté parce qu'il tronque les flottants (`1.5` → 1, `1e3` → 1000) **[source]** (`EnvVarProcessor`, Symfony 8.1.6) |
 | **Budget disque** | volume de **500 Mo** minimum, alerte à **70 %** **[hypothèse]** | 101 Mo mesurés au pire cas de chaînes, plus pages libres, WAL (jusqu'à `journal_size_limit` en régime normal) et marge d'exploitation |
 | **Surveillance** | taille du volume et du fichier `-wal` | les pages libérées par l'éviction sont réutilisées, mais le WAL **ne peut pas être ramené** tant qu'une lecture longue reste ouverte (par exemple une sauvegarde) **[source]** |
-| Démarrage | migrations, puis `app:statistics:apply-window`, puis PHP-FPM (§7.6) | schéma et fenêtre cohérents avant le premier appel |
+| Démarrage | migrations, puis `app:statistics:apply-window`, puis PHP-FPM (§7.6) ; seulement quand le conteneur lance `php-fpm` | schéma et fenêtre cohérents avant le premier appel |
 
 ### 6.6 Changer N
 
@@ -929,18 +931,20 @@ Le quota n'est **pas dupliqué** dans Symfony : le composant RateLimiter nécess
 | `build` | `composer install --no-dev --classmap-authoritative`, `composer dump-env prod`, `cache:warmup` (génère le fichier de preload) |
 | `prod` | application copiée depuis `build` (code à `root`, `var/` à `www-data`), `app.prod.ini`, `var/data` créé et attribué à `www-data`, exécution en `www-data`, système de fichiers en lecture seule sauf `var/` : `var/data` est le volume ; `var/share` (pool `cache.app`), `var/log` et `/tmp` sont des tmpfs attribués à `www-data` (un tmpfs est créé au nom de `root`) ; `var/cache/prod`, préchauffé dans l'image, reste en lecture seule |
 
-**Séquence de démarrage** (entrypoint, en mode « arrêt à la première erreur ») :
+**Séquence de démarrage** (entrypoint, en mode « arrêt à la première erreur »), quand la commande est `php-fpm` :
 
 ```
-1. bin/console doctrine:migrations:migrate --no-interaction
-2. bin/console app:statistics:apply-window
+1. php bin/console doctrine:migrations:migrate --no-interaction
+2. php bin/console app:statistics:apply-window
 3. exec php-fpm
 ```
 
 - **Si l'étape 1 ou 2 échoue** (SQLite inaccessible, droits du volume, `STATS_WINDOW_SIZE` invalide) : le conteneur **s'arrête avec un code d'erreur**. PHP-FPM ne démarre pas, **la génération n'est pas servie**, l'orchestrateur relance le conteneur avec un délai croissant et le healthcheck reste en échec (D16).
 - **Pourquoi échouer plutôt que démarrer en mode dégradé** : au démarrage, un stockage inaccessible signale presque toujours une **erreur de configuration** (volume non monté, droits). Échouer visiblement la révèle immédiatement, au lieu de servir durablement un service sans statistiques. Le mode dégradé couvre les pannes **survenant après** un démarrage réussi.
 - **`exec`** : PHP-FPM remplace le script et reçoit directement les signaux d'arrêt.
-- **Livraison** : à l'étape 3, l'entrypoint se limite à `exec "$@"`. Les étapes 1 et 2 de la séquence arrivent à l'étape 7, avec les migrations et `ApplyStatisticsWindowCommand`.
+- **Autre commande** (`docker compose run --rm php php bin/console …`) : l'entrypoint passe directement à `exec`, sans migrations ni fenêtre, pour qu'on puisse diagnostiquer un volume défaillant (choix du développeur, étape 7).
+- **En dev** : l'entrypoint est copié dans l'image, et le conteneur exige `vendor/` sur l'hôte, puisque le code est monté. Après une modification de `docker/php/docker-entrypoint.sh`, il faut reconstruire l'image dev (`docker compose build php`) : `make start` ne la reconstruit pas.
+- **Limite de `up --wait` tant qu'il n'y a pas de `HEALTHCHECK`** : un échec immédiat fait bien échouer la commande (volume en lecture seule : code 1). Un échec qui survient après les migrations peut en revanche passer inaperçu, car Compose voit le conteneur `running` entre deux redémarrages **[source]** (essai du 2026-09-13 avec `STATS_WINDOW_SIZE=1.5` : code 0, 8 redémarrages en 12 s). Le `HEALTHCHECK` de l'étape 9 lève cette limite.
 - **`HEALTHCHECK`** sur le conteneur Nginx : `wget` sur `/healthz` depuis `127.0.0.1`, ce qui valide toute la chaîne. Ajouté à l'étape 9, avec `HealthController` : avant, `/healthz` n'existe pas et `make start` attend seulement que les conteneurs tournent.
 - **`.dockerignore`** : `var/`, `vendor/`, `.git`, `tests/`, `docs/` ; fichiers d'environnement locaux (`.env.local`, `.env.*.local`, `.env.test`) ; outillage et consignes (`.claude`, `CLAUDE*.md`, `AGENTS.md`, `Makefile`, fichiers compose, configurations de PHPStan, Deptrac, PHPUnit, PHP-CS-Fixer et Redocly). `docker/` et `.env` restent dans le contexte de build.
 - **Secrets** : aucun dans l'image. `APP_SECRET` est injecté à l'exécution ; les vraies variables d'environnement l'emportent sur le fichier généré par `dump-env`.
@@ -957,6 +961,7 @@ Le quota n'est **pas dupliqué** dans Symfony : le composant RateLimiter nécess
 - **`depends_on: php` avec `restart: true`** : Nginx résout `php` à son démarrage ; il redémarre quand `php` est recréé, sinon il garderait l'ancienne adresse et répondrait 502.
 - **`restart: unless-stopped`** sur les deux services (D16) : un conteneur en échec, au démarrage comme en cours de route, est relancé par Docker avec un délai croissant. `up --wait` est toujours accompagné de `--wait-timeout 60`, pour qu'un conteneur qui boucle fasse quand même échouer la commande.
 - **`APP_SECRET`** vide par défaut (`${APP_SECRET:-}`), injecté par l'environnement en production.
+- **`DATABASE_URL` et `STATS_WINDOW_SIZE`** sont posés dans `compose.yaml` pour `php` (`${STATS_WINDOW_SIZE:-100000}`), avec les mêmes valeurs par défaut que `.env`.
 
 ### 7.8 Variables d'environnement
 
@@ -965,7 +970,7 @@ Le quota n'est **pas dupliqué** dans Symfony : le composant RateLimiter nécess
 | `APP_ENV` | php | `prod` | environnement Symfony |
 | `APP_SECRET` | php | *(secret)* | requis par Symfony |
 | `DATABASE_URL` | php | `sqlite:///%kernel.project_dir%/var/data/app.db` | DSN |
-| `STATS_WINDOW_SIZE` | php | `100000` | N de la fenêtre glissante |
+| `STATS_WINDOW_SIZE` | php | `100000` | N de la fenêtre glissante ; entier décimal ≥ 1, sinon le démarrage échoue (§6.5) |
 | `RATE_LIMIT_*`, `TRUSTED_PROXY_CIDR` | nginx | voir §7.4 | quotas, proxys de confiance |
 
 ### 7.9 Synthèse sécurité
@@ -1028,7 +1033,7 @@ Les tests ci-dessous sont **à écrire** lors de l'implémentation ; aucun n'est
 | **Unitaire — Domain** | `FizzBuzzParameters`, `FizzBuzzGenerator` | aucune | tous les cas du §3.2, dont `"0"`, espace et chaîne vide (niveau domaine) ; diviseurs 2 et 4 ; invariants violés sans Symfony |
 | **Unitaire — Application** | `GenerateFizzBuzz`, `GetMostFrequentRequest` | `InMemoryRequestStatisticsStore` (avec un mode « en panne ») + logger de test | `record()` appelé exactement une fois ; résultat restitué intact ; stockage en panne → liste quand même retournée et `warning` journalisé, sans nouvelle tentative ; lecture sans incrément ; lecture en panne → exception propagée |
 | **Contrat** | `RequestStatisticsStore` | exécuté par **les deux** adaptateurs | invariant 1 du §6.3 (observable par le port) ; fenêtre N = 1 et petites fenêtres ; frontière N / N+1 ; entrée et sortie d'une même combinaison ; ancien gagnant qui décline ; départage (exemple du §3.4) ; `windowCount ≤ windowSize` |
-| **Intégration SQLite** | `SqliteRequestStatisticsStore`, `SqliteConnectionPragmas`, `ApplyStatisticsWindowCommand` | fichier SQLite temporaire | invariants 2 à 5 du §6.3 vérifiés sur les tables ; rollback complet sur panne injectée ; migrations rejouables ; persistance après réouverture ; pragmas effectifs sur une nouvelle connexion ; `STATS_WINDOW_SIZE` invalide rejeté ; **plans d'exécution** de la lecture et de l'éviction sans parcours du journal (R03) ; **réduction de N puis lecture immédiate** : `count ≤ size` et gagnant de la nouvelle fenêtre (R09) |
+| **Intégration SQLite** | `SqliteRequestStatisticsStore`, `SqliteConnectionPragmas`, `ApplyStatisticsWindowCommand` | fichier SQLite temporaire | invariants 2 à 5 du §6.3 vérifiés sur les tables ; rollback complet sur panne injectée ; migrations rejouables ; persistance après réouverture ; pragmas effectifs sur une nouvelle connexion ; `STATS_WINDOW_SIZE` invalide rejeté ; **plans d'exécution** de la lecture et de l'éviction sans parcours du journal (R03) ; **réduction de N puis lecture immédiate** : `count ≤ size` et gagnant de la nouvelle fenêtre (R09). Ajoutés à l'étape 7 : SQL identique à `docs/benchmarks/lib.php` (constantes de l'adaptateur et `sqlite_master`) ; annulation totale par SQLite (`RAISE(ROLLBACK)`) ; disque plein (`max_page_count`) ; connexion réutilisable après chaque panne ; `STATS_WINDOW_SIZE` non décimal refusé |
 | **Intégration — pannes** | adaptateur SQLite | fichier verrouillé ou inaccessible | **attente de verrou** : un verrou tenu au-delà de 200 ms produit `StatisticsStoreUnavailable` en ~200 ms ; **échec rapide** : fichier en lecture seule → erreur immédiate. La **lenteur d'entrées-sorties** n'est pas reproductible de façon fiable : elle est couverte par le timeout FPM et la surveillance, pas par un test (R04) |
 | **Concurrence** | SQLite, plusieurs processus | fichier partagé | plusieurs processus PHP enregistrent en parallèle : aucune perte, aucun doublon ; somme des hits = min(appels confirmés, N) ; lecture concurrente cohérente |
 | **Fonctionnel** | les 3 endpoints | `WebTestCase` + SQLite de test | **matrice complète du §3.3** (code et message attendus), dont absent, vide, `"0"`, espace et chaîne normale (R01), saut de ligne final et interne, retour chariot, tabulation, NUL (R02) ; pire cas `limit = 10 000` en moins de 6,1 Mo ; emoji renvoyé non échappé ; **HEAD** sur les 3 endpoints, sans corps ni comptage ; 400 non comptés ; ordre des paramètres ; stats vides et après N appels, avec `window` et départage ; 404/405/503 en problem+json ; `X-Request-Id` dans les logs ; stockage indisponible → `/v1/fizzbuzz` 200, `/v1/stats` 503, `/healthz` 200 `degraded` ; **erreur après commit** (exception injectée pendant l'encodage) → 500 **et** appel compté (R12) |
@@ -1036,13 +1041,13 @@ Les tests ci-dessous sont **à écrire** lors de l'implémentation ; aucun n'est
 | **Smoke** | stack Docker complète via Nginx | `docker compose -f compose.yaml up -d --wait --wait-timeout 60` (image `prod`, sans la surcharge dev) + `curl` | `/healthz` 200 en local ; **403 JSON** avec `X-Forwarded-For` d'une IP publique ; appel fizzbuzz 200 ; **3 requêtes acceptées puis 429 JSON** avec `Retry-After` ; deux IP simulées ont chacune leur quota ; un 429 n'est pas compté ; `/healthz` hors quota ; 413 en JSON ; **414 en JSON avec une vraie URL dépassant 8 Ko, et non 500 ni HTML** (R07) ; **`Cache-Control: no-store` et `X-Request-Id`** sur un 200, un 400, un 413, un 414, un 429, un 502 et sur `HEAD` (R11) ; **marqueurs de test** dans `str1` et `str2` absents du log d'accès et du log d'erreur après succès et après 429, et présence dans le log d'erreur après un 502 ou un 413, conforme à la politique du §8.1 (R08) |
 | **Démarrage** | conteneur PHP | volume inaccessible | volume en lecture seule ou droits incorrects → le conteneur s'arrête avec un code d'erreur, PHP-FPM ne démarre pas (R05) |
 
-Base de test : `DATABASE_URL` défini dans `.env.test`, tables vidées dans `setUp()`, fenêtre réduite (par exemple N = 5) pour observer les évictions.
+Base de test : `var/test.db` (`DATABASE_URL` défini dans `.env.test`), migrée par `make test-db` et par l'étape « migrations de test » de la CI. Les tables sont vidées dans `setUp()`, séquence `AUTOINCREMENT` comprise, et la fenêtre est réduite (par exemple N = 5) pour observer les évictions. Les tests qui ont besoin de leur propre fichier (migrations, concurrence) migrent un fichier temporaire dans un sous-processus.
 
 ### 9.2 Analyse statique et architecture
 
 | Outil | Réglage |
 |---|---|
-| **Deptrac** (`deptrac/deptrac` 4.7) | couches `Domain`, `Application`, `Infrastructure`, plus `Shared` (`src/Shared/`, qui ne dépend jamais du code de `src/FizzBuzz/`) ; règles du §5.2 ; seule dépendance externe autorisée dans `Application` : `Psr\Log\LoggerInterface` ; `--fail-on-uncovered` : une dépendance vers une classe hors de toute couche échoue, sauf les classes internes de PHP ; échec de la CI en cas de violation |
+| **Deptrac** (`deptrac/deptrac` 4.7) | couches `Domain`, `Application`, `Infrastructure`, plus `Shared` (`src/Shared/`, qui ne dépend jamais du code de `src/FizzBuzz/`) ; règles du §5.2 ; seule dépendance externe autorisée dans `Application` : `Psr\Log\LoggerInterface` ; Doctrine limité à DBAL (`^Doctrine.DBAL`), si bien que l'ORM ou `doctrine/migrations` utilisés dans `src/` sont non couverts ; couche `NativeDatabase` (`PDO`, `Pdo\Sqlite`, `SQLite3`) interdite à toutes les couches ; `--fail-on-uncovered` : une dépendance vers une classe hors de toute couche échoue, sauf les classes internes de PHP ; échec de la CI en cas de violation |
 | PHPStan 2 + `phpstan/phpstan-symfony` | niveau `max` |
 | PHP-CS-Fixer | `@Symfony` + `@PER-CS`, `declare(strict_types=1)` |
 | `composer validate --strict` + `composer audit` | CI |
@@ -1057,7 +1062,7 @@ Base de test : `DATABASE_URL` défini dans `.env.test`, tables vidées dans `set
 
 Versions relevées sur Packagist le 2026-09-11 : `symfony/framework-bundle` 8.1.6, `doctrine/doctrine-bundle` 3.3, `doctrine/doctrine-migrations-bundle` 4.0, `phpunit/phpunit` 13.3, `phpstan/phpstan` 2.2, `deptrac/deptrac` 4.7.1.
 
-Chaque paquet est installé à l'étape du plan qui s'en sert (§12). **[source]** `composer show`, 2026-09-13 : à l'étape 2, `phpunit/phpunit` 13.3.3, `phpstan/phpstan` 2.2.14, `phpstan/phpstan-symfony` 2.0.20, `friendsofphp/php-cs-fixer` 3.95.25 et `deptrac/deptrac` 4.7.1. `symfony/browser-kit` arrive à l'étape 8, avec les premiers `WebTestCase`. `psr/log` 3.0.2 est déclaré directement à l'étape 6 : `Application` en dépend (`LoggerInterface`), il n'arrive plus seulement par Symfony **[source]** `composer show psr/log`, 2026-09-13.
+Chaque paquet est installé à l'étape du plan qui s'en sert (§12). **[source]** `composer show`, 2026-09-13 : à l'étape 2, `phpunit/phpunit` 13.3.3, `phpstan/phpstan` 2.2.14, `phpstan/phpstan-symfony` 2.0.20, `friendsofphp/php-cs-fixer` 3.95.25 et `deptrac/deptrac` 4.7.1. `symfony/browser-kit` arrive à l'étape 8, avec les premiers `WebTestCase`. `psr/log` 3.0.2 est déclaré directement à l'étape 6 : `Application` en dépend (`LoggerInterface`), il n'arrive plus seulement par Symfony **[source]** `composer show psr/log`, 2026-09-13. À l'étape 7 : `doctrine/dbal` 4.4.4, `doctrine/doctrine-bundle` 3.3.2 et `doctrine/doctrine-migrations-bundle` 4.0.1, qui apporte `doctrine/migrations` 3.9.7 **[source]** (`composer require`, 2026-09-13). `extra.symfony.docker` vaut `false` dans `composer.json`, pour que les recettes Flex n'ajoutent pas de service de base de données à `compose.yaml`. La recette de DoctrineBundle, qui écrit une configuration ORM, a été réécrite en DBAL seul.
 
 ### 9.4 Test de charge (k6) — à réaliser
 
@@ -1098,14 +1103,14 @@ leboncoin-test/
 ├── bin/console
 ├── config/
 │   ├── packages/
-│   │   ├── doctrine.yaml                   # DBAL SQLite, middlewares EnableForeignKeys et pragmas
+│   │   ├── doctrine.yaml                   # DBAL SQLite seul, logging: false (middlewares déclarés dans services.yaml)
 │   │   ├── doctrine_migrations.yaml
 │   │   ├── framework.yaml                  # exceptions → 503 / 500
 │   │   ├── monolog.yaml                    # JSON sur stderr, RequestIdProcessor
 │   │   └── validator.yaml
 │   ├── preload.php
 │   ├── routes.yaml                         # routing.controllers : services portant #[Route], pas de scan de dossier [source] Symfony 8.1
-│   └── services.yaml                       # alias RequestStatisticsStore → SQLite (étape 7) ; exclusion de FizzBuzzParameters, des exceptions et de Model
+│   └── services.yaml                       # alias RequestStatisticsStore → SQLite, fabrique stricte de STATS_WINDOW_SIZE, EnableForeignKeys ; exclusion de FizzBuzzParameters, des exceptions et de Model
 ├── docker/
 │   ├── nginx/
 │   │   ├── templates/default.conf.template # quotas, real_ip, logs, gzip, erreurs JSON internes, /healthz restreint
@@ -1166,13 +1171,16 @@ leboncoin-test/
 │   ├── Integration/FizzBuzz/
 │   │   ├── Persistence/
 │   │   │   ├── SqliteRequestStatisticsStoreTest.php             # exécute le contrat, plans, pannes
-│   │   │   └── SqliteRequestStatisticsStoreConcurrencyTest.php
+│   │   │   ├── SqliteRequestStatisticsStoreConcurrencyTest.php
+│   │   │   ├── MigrationsTest.php                               # rejouables, schéma identique à lib.php, WAL
+│   │   │   └── Fixtures/record-worker.php                       # processus écrivain ou lecteur de la concurrence
 │   │   └── Cli/ApplyStatisticsWindowCommandTest.php
 │   ├── Functional/{GenerateFizzBuzzEndpointTest.php, StatisticsEndpointTest.php, HealthEndpointTest.php}
 │   ├── Smoke/smoke.sh                                           # via Nginx : quotas, erreurs JSON, en-têtes, logs, démarrage
 │   ├── Load/fizzbuzz.js                                         # k6 : démonstration de l'objectif de latence
 │   ├── Support/InMemoryRequestStatisticsStore.php
 │   ├── Support/RecordingLogger.php                             # logger PSR-3 de test
+│   ├── Support/SqliteTestDatabase.php                          # connexions, vidage, invariants du §6.3, migrations en sous-processus
 │   └── bootstrap.php
 ├── var/                                    # ignoré par git
 ├── .dockerignore  .editorconfig  .env  .env.test  .gitignore
@@ -1195,9 +1203,10 @@ leboncoin-test/
 | `install` | `composer install` |
 | `start` / `stop` | `docker compose up -d --wait --wait-timeout 60` / `down`, avec la surcharge dev (les volumes de données sont conservés) |
 | `sh` / `logs` | shell PHP / logs des services |
-| `migrate` | migrations explicites |
-| `test` | toute la suite PHPUnit |
-| `test-unit` / `test-integration` / `test-functional` | un niveau précis |
+| `migrate` | migrations explicites de la base de la stack (conteneur PHP par défaut) |
+| `test-db` | migrations de la base de test `var/test.db` |
+| `test` | `test-db`, puis toute la suite PHPUnit |
+| `test-unit` / `test-integration` / `test-functional` | un niveau précis (`test-db` d'abord pour les deux derniers) |
 | `smoke` | smoke test via Nginx |
 | `load-test` | test de charge k6 contre l'image `prod` (§9.4) |
 | `benchmarks` | exécute les scripts de `docs/benchmarks/` (hors CI) |
@@ -1205,16 +1214,16 @@ leboncoin-test/
 | `fix` | PHP-CS-Fixer avec correction |
 | `ci` | `composer validate --strict` + `composer audit` + `lint` + `test` (identique aux jobs `quality`, `tests` et `openapi` de la CI) |
 | `build` | image `prod` : `docker compose -f compose.yaml build php` |
-| `stats-reset` | vide les deux tables de statistiques, après confirmation interactive |
+| `stats-reset` | vide les deux tables de statistiques de la stack après confirmation interactive, en une seule chaîne SQL transactionnelle (conteneur PHP par défaut) |
 
-Les commandes PHP et Composer des cibles tournent **sur l'hôte** par défaut, comme les jobs `quality` et `tests` de la CI (§11.2). La variable `EXEC`, vide par défaut, les fait passer par le conteneur : `make lint EXEC='docker compose exec -T php'`. Le lint OpenAPI (`npx`) tourne toujours sur l'hôte. Les cibles arrivent avec l'étape qui les rend utiles : `start`, `stop`, `sh`, `logs`, `build` et `smoke` à l'étape 3 (smoke complété à l'étape 9), `migrate` et `stats-reset` à l'étape 7, et `load-test` à l'étape 9b. Le `Makefile` exporte `HOST_UID` et `HOST_GID`, repris par l'image dev.
+Les commandes PHP et Composer des cibles tournent **sur l'hôte** par défaut, comme les jobs `quality` et `tests` de la CI (§11.2). La variable `EXEC`, vide par défaut, les fait passer par le conteneur : `make lint EXEC='docker compose exec -T php'`. Le lint OpenAPI (`npx`) tourne toujours sur l'hôte. **Exception** (choix du développeur, étape 7) : `migrate` et `stats-reset` visent la base de la stack et passent par défaut par `docker compose exec -T php` ; `EXEC` les redirige ailleurs (prod : `EXEC='docker compose -f compose.yaml exec -T php'`). Les cibles arrivent avec l'étape qui les rend utiles : `start`, `stop`, `sh`, `logs`, `build` et `smoke` à l'étape 3 (smoke complété à l'étape 9), `migrate` et `stats-reset` à l'étape 7, et `load-test` à l'étape 9b. Le `Makefile` exporte `HOST_UID` et `HOST_GID`, repris par l'image dev.
 
 ### 11.2 CI GitHub Actions
 
 | Job | Étapes |
 |---|---|
 | `quality` | setup PHP 8.5 et Composer 2.10.3 → cache Composer → `composer validate --strict` → `composer install` → `composer audit` → PHP-CS-Fixer → `cache:warmup --env=dev` → `lint:container` → `lint:yaml` → PHPStan → **Deptrac** |
-| `tests` | setup PHP 8.5 → cache Composer → `composer install` → migrations de test (à partir de l'étape 7) → PHPUnit (unitaires, contrat, intégration, concurrence, fonctionnels) |
+| `tests` | setup PHP 8.5 (avec `pdo_sqlite`) → cache Composer → `composer install` → migrations de test (`doctrine:migrations:migrate --env=test`, comme `make test-db`) → PHPUnit (unitaires, contrat, intégration, concurrence, fonctionnels) |
 | `openapi` | Node 24 → `npx --yes @redocly/cli@2.52.1 lint` (configuration `redocly.yaml`) |
 | `docker` | `docker compose -f compose.yaml build php` → `docker compose -f compose.yaml up -d --wait --wait-timeout 60` (sans la surcharge dev) → `tests/Smoke/smoke.sh` → en cas d'échec, `ps -a` et logs de la stack |
 | `load-test` *(manuel)* | `workflow_dispatch` : build `prod` → quotas relevés → k6 → seuils bloquants (§9.4) |
@@ -1236,7 +1245,7 @@ Fichier `.github/workflows/ci.yaml` (étape 4) :
 |---|---|
 | Démarrer, arrêter | `make start` / `make stop` |
 | Diagnostiquer une requête | récupérer son `X-Request-Id`, puis filtrer les logs Nginx et PHP sur cette valeur |
-| **Le conteneur PHP ne démarre pas** | lire la sortie de l'entrypoint : migration ou `app:statistics:apply-window` en échec ; vérifier le montage du volume, ses droits (`www-data`) et `STATS_WINDOW_SIZE`. Tant que ce n'est pas corrigé, la génération n'est pas servie (D16) |
+| **Le conteneur PHP ne démarre pas** | lire la sortie de l'entrypoint : migration ou `app:statistics:apply-window` en échec ; vérifier le montage du volume, ses droits (`www-data`) et `STATS_WINDOW_SIZE` (entier décimal ≥ 1). Pour diagnostiquer, `docker compose -f compose.yaml run --rm php php bin/console …` ne lance ni migrations ni fenêtre. Tant que ce n'est pas corrigé, la génération n'est pas servie (D16) |
 | Service en `degraded` | lire les `warning` `statistics.record_skipped` ; vérifier l'espace disque et les droits du volume ; la génération reste servie pendant l'intervention |
 | Modifier N ou les quotas | changer la variable d'environnement puis redéployer. Une réduction de N est appliquée **au démarrage**, avant l'arrivée du trafic (§6.6) |
 | Surveiller le stockage | taille du volume (alerte à 70 %) et du fichier `-wal` ; un WAL qui ne diminue pas après une sauvegarde signale une lecture restée ouverte |

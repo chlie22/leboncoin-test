@@ -26,3 +26,14 @@ services:
 
     # add more service definitions when explicit configuration is needed
     # please note that last definitions always *replace* previous ones
+
+    # DBAL middleware, autoconfigured with the doctrine.middleware tag like SqliteConnectionPragmas (§6.5).
+    Doctrine\DBAL\Driver\AbstractSQLiteDriver\Middleware\EnableForeignKeys: ~
+
+    # STATS_WINDOW_SIZE as a raw string, checked by the factory: %env(int:)% would truncate "1.5" to 1 (§6.5).
+    App\FizzBuzz\Infrastructure\Persistence\SqliteRequestStatisticsStore:
+        factory: ['App\FizzBuzz\Infrastructure\Persistence\SqliteRequestStatisticsStore', 'withConfiguredWindowSize']
+        arguments:
+            $configuredWindowSize: '%env(STATS_WINDOW_SIZE)%'
+
+    App\FizzBuzz\Application\Port\RequestStatisticsStore: '@App\FizzBuzz\Infrastructure\Persistence\SqliteRequestStatisticsStore'

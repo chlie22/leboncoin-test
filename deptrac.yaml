@@ -26,18 +26,29 @@ deptrac:
       collectors:
         - type: classLike
           value: ^Psr.Log.LoggerInterface$
+    # PHP's native database classes: src/ goes through Doctrine DBAL only (§5.3), so no layer may depend on them.
+    - name: NativeDatabase
+      collectors:
+        - type: classLike
+          value: ^PDO.*
+        - type: classLike
+          value: ^Pdo.*
+        - type: classLike
+          value: ^SQLite3.*
     - name: Framework
       collectors:
         - type: classLike
           value: ^Symfony.*
+        # Doctrine DBAL only: the ORM or doctrine/migrations in src/ is uncovered, hence a failure.
         - type: classLike
-          value: ^Doctrine.*
+          value: ^Doctrine.DBAL.*
         - type: classLike
           value: ^Monolog.*
         # Every PSR interface except LoggerInterface, which belongs to PsrLog only.
         - type: classLike
           value: ^Psr.(?!Log.LoggerInterface$).*
   ruleset:
+    NativeDatabase: ~
     Domain: ~
     Application:
       - Domain

@@ -39,7 +39,8 @@ make help                                               # liste des cibles
 make ci                                                 # composer validate + audit, lint, test : la vérification complète
 make lint                                               # PHP-CS-Fixer (dry-run), cache:warmup, lint:container, lint:yaml, PHPStan max, Deptrac --fail-on-uncovered, Redocly
 make fix                                                # PHP-CS-Fixer avec correction
-make test                                               # toute la suite PHPUnit
+make test                                               # make test-db (migrations de var/test.db), puis toute la suite PHPUnit
+make test-db                                            # à lancer avant un vendor/bin/phpunit direct sur un clone neuf
 make test-unit                                          # aussi test-integration, test-functional ; code 1 tant que la suite est vide
 make benchmarks                                         # scripts de docs/benchmarks/ : plusieurs minutes, ~1 Go de disque, hors CI
 vendor/bin/phpunit tests/Unit/FizzBuzz/Domain/FizzBuzzGeneratorTest.php --filter nomDuTest   # un seul test
@@ -53,7 +54,9 @@ CI (étape 4) : `.github/workflows/ci.yaml`, jobs `quality`, `tests`, `openapi`,
 Stack Docker (étape 3). Sans `-f`, `docker compose` charge aussi `compose.override.yaml` : cible `dev`, code monté, `www-data` à l'UID de l'hôte (exporté par le `Makefile`). La prod se pilote avec `docker compose -f compose.yaml …`.
 
 ```bash
-make start                                              # docker compose up -d --wait --wait-timeout 60 (cible dev)
+make start                                              # docker compose up -d --wait --wait-timeout 60 (cible dev) ; exige vendor/ sur l'hôte ; ne reconstruit pas l'image
+make migrate                                            # migrations de la base de la stack, dans le conteneur PHP par défaut
+make stats-reset                                        # vide les statistiques de la stack après confirmation, dans le conteneur PHP par défaut
 make stop                                               # docker compose down ; les volumes de données restent
 make sh                                                 # shell dans le conteneur PHP
 make logs                                               # logs des services, en continu
@@ -62,7 +65,9 @@ make smoke                                              # smoke test via Nginx c
 make ci EXEC='docker compose exec -T php'               # vérification complète dans le conteneur (npx reste sur l'hôte)
 ```
 
-Prévues par la spec (§11.1), créées aux étapes 7 et 9b. Avant de s'en servir, vérifier dans `docs/progress.md` que l'étape correspondante est faite : `make migrate`, `make stats-reset`, `make load-test`.
+`make migrate` et `make stats-reset` visent la base de la stack : ils passent par `docker compose exec -T php` sauf si `EXEC` est fourni (prod : `EXEC='docker compose -f compose.yaml exec -T php'`). Au démarrage, l'entrypoint applique les migrations puis `app:statistics:apply-window`, seulement pour `php-fpm`. Après une modification de `docker/php/docker-entrypoint.sh` ou du `Dockerfile`, reconstruire l'image dev avec `docker compose build php`.
+
+Prévue par la spec (§11.1), créée à l'étape 9b. Avant de s'en servir, vérifier dans `docs/progress.md` que l'étape est faite : `make load-test`.
 
 ## Architecture
 

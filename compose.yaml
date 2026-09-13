@@ -40,6 +40,10 @@ services:
     environment:
       APP_ENV: prod
       APP_SECRET: ${APP_SECRET:-}
+      # Base SQLite sur le volume stats-data (§6.5, §7.8).
+      DATABASE_URL: sqlite:///%kernel.project_dir%/var/data/app.db
+      # Taille de la fenêtre des statistiques : entier décimal >= 1, sinon le conteneur ne démarre pas (§6.6).
+      STATS_WINDOW_SIZE: ${STATS_WINDOW_SIZE:-100000}
     volumes:
       - stats-data:/app/var/data
     # Lecture seule sauf var/ (§7.6) : var/data est le volume, var/share (pool cache.app) et var/log en tmpfs ;

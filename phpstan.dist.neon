@@ -6,10 +6,14 @@ parameters:
     level: max
     paths:
         - config
+        - migrations
         - src
         - tests
     excludePaths:
         - config/reference.php
+    # Global constants (SQL of docs/conception.md §6) compared with the adapter by SqliteRequestStatisticsStoreTest.
+    scanFiles:
+        - docs/benchmarks/lib.php
     tmpDir: var/cache/phpstan
     ignoreErrors:
         # False positive: KernelTrait calls $this->getAllowedEnvs() (symfony/dependency-injection 8.1),
