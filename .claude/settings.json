@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(composer *)",
+      "Bash(php bin/console *)",
+      "Bash(bin/console *)",
+      "Bash(vendor/bin/phpunit *)",
+      "Bash(vendor/bin/phpstan *)",
+      "Bash(vendor/bin/php-cs-fixer *)",
+      "Bash(vendor/bin/deptrac *)",
+      "Bash(make *)",
+      "Bash(docker compose *)",
+      "Bash(npx --yes @redocly/cli@2.52.1 *)",
+      "Bash(php docs/benchmarks/*)",
+      "Bash(php -d memory_limit=1G docs/benchmarks/*)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)"
+    ],
+    "ask": [
+      "Bash(git commit *)",
+      "Bash(make stats-reset *)",
+      "Bash(rm -rf *)"
+    ],
+    "deny": []
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/lint-openapi.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

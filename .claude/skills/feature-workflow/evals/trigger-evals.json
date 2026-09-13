@@ -1,0 +1,14 @@
+[
+  {"query": "attaque l'étape 3 du plan", "should_trigger": true},
+  {"query": "on commence l'implémentation de GET /v1/stats", "should_trigger": true},
+  {"query": "implémente le mode dégradé dans GenerateFizzBuzz", "should_trigger": true},
+  {"query": "next step of the implementation plan please", "should_trigger": true},
+  {"query": "ajoute un en-tête X-RateLimit-Remaining sur toutes les réponses", "should_trigger": true},
+  {"query": "passe à l'étape 7 : la persistance SQLite et la commande apply-window", "should_trigger": true},
+  {"query": "explique-moi comment fonctionne la fenêtre glissante des statistiques", "should_trigger": false},
+  {"query": "relis mon diff côté couches avant que je commite", "should_trigger": false},
+  {"query": "pourquoi avoir choisi Nginx plutôt que FrankenPHP ?", "should_trigger": false},
+  {"query": "relance les benchmarks et donne-moi les résultats", "should_trigger": false},
+  {"query": "corrige la faute de frappe dans le titre du README", "should_trigger": false},
+  {"query": "où est-ce que je place une interface Clock dans l'archi ?", "should_trigger": false}
+]

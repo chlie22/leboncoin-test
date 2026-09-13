@@ -1,0 +1,15 @@
+# Configuration de Redocly CLI : lint du contrat d'API, identique en local et en CI.
+# Version épinglée : npx @redocly/cli@2.52.1 lint
+
+extends:
+  - recommended
+
+apis:
+  fizzbuzz@v1:
+    root: docs/openapi.yaml
+
+rules:
+  # Aucune licence n'est définie pour ce projet : on n'en invente pas une dans le contrat.
+  info-license: off
+  # Seul l'environnement local existe ; l'URL de production sera ajoutée au premier déploiement.
+  no-server-example.com: off

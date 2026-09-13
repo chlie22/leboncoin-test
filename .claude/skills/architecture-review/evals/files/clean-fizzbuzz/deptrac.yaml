@@ -1,0 +1,45 @@
+deptrac:
+  paths:
+    - ./src
+  layers:
+    - name: Domain
+      collectors:
+        - type: directory
+          value: src/FizzBuzz/Domain/.*
+    - name: Application
+      collectors:
+        - type: directory
+          value: src/FizzBuzz/Application/.*
+    - name: Infrastructure
+      collectors:
+        - type: directory
+          value: src/FizzBuzz/Infrastructure/.*
+    - name: Shared
+      collectors:
+        - type: directory
+          value: src/Shared/.*
+    - name: PsrLog
+      collectors:
+        - type: classLike
+          value: ^Psr.Log.*
+    - name: Framework
+      collectors:
+        - type: classLike
+          value: ^Symfony.*
+        - type: classLike
+          value: ^Doctrine.*
+        - type: classLike
+          value: ^Monolog.*
+  ruleset:
+    Domain: ~
+    Application:
+      - Domain
+      - PsrLog
+    Infrastructure:
+      - Application
+      - Domain
+      - Framework
+      - PsrLog
+    Shared:
+      - Framework
+      - PsrLog

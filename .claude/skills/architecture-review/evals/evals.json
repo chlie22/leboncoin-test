@@ -1,0 +1,61 @@
+{
+  "skill_name": "architecture-review",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Fais une revue d'architecture de evals/files/leaky-fizzbuzz avant que je commite l'étape 6.",
+      "expected_output": "A findings report grouped by severity, with file:line on every finding. It flags as blocking the Symfony Validator attributes in Domain, the Doctrine connection in the Application use case, the FizzBuzz logic in the controller, and the absence of any Deptrac configuration. It does not flag the clean FizzBuzzGenerator, and it edits nothing.",
+      "files": [
+        "evals/files/leaky-fizzbuzz/src/FizzBuzz/Domain/FizzBuzzParameters.php",
+        "evals/files/leaky-fizzbuzz/src/FizzBuzz/Domain/FizzBuzzGenerator.php",
+        "evals/files/leaky-fizzbuzz/src/FizzBuzz/Application/GenerateFizzBuzz.php",
+        "evals/files/leaky-fizzbuzz/src/FizzBuzz/Infrastructure/Api/GenerateFizzBuzzController.php"
+      ],
+      "expectations": [
+        "FizzBuzzParameters.php is reported as BLOCKING for Symfony Validator usage in Domain, pointing at line 7 or line 12",
+        "GenerateFizzBuzz.php is reported as BLOCKING for depending on Doctrine DBAL in Application, pointing at line 9 or line 15, with a fix that uses the RequestStatisticsStore port",
+        "GenerateFizzBuzzController.php is reported as BLOCKING for FizzBuzz business logic in the controller, pointing at line 17",
+        "The missing Deptrac configuration is reported as a blocking finding, and the review does not declare the layers clean from a text search",
+        "FizzBuzzGenerator.php is not reported as a violation",
+        "Every finding includes a file path and a line number, and blocking findings are listed first",
+        "No Write, Edit or NotebookEdit tool call appears in the transcript"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Est-ce que le code de evals/files/clean-fizzbuzz respecte notre architecture ?",
+      "expected_output": "No blocking finding on the PHP files. The review states that Deptrac could not be run (no vendor directory), so the layer rule is unproven rather than clean, and keeps the verdict short.",
+      "files": [
+        "evals/files/clean-fizzbuzz/deptrac.yaml",
+        "evals/files/clean-fizzbuzz/src/FizzBuzz/Domain/FizzBuzzParameters.php",
+        "evals/files/clean-fizzbuzz/src/FizzBuzz/Domain/FizzBuzzGenerator.php",
+        "evals/files/clean-fizzbuzz/src/FizzBuzz/Domain/Exception/InvalidFizzBuzzParameters.php",
+        "evals/files/clean-fizzbuzz/src/FizzBuzz/Application/GenerateFizzBuzz.php",
+        "evals/files/clean-fizzbuzz/src/FizzBuzz/Application/Port/RequestStatisticsStore.php",
+        "evals/files/clean-fizzbuzz/src/FizzBuzz/Application/Model/RequestStatistics.php",
+        "evals/files/clean-fizzbuzz/src/FizzBuzz/Application/Exception/StatisticsStoreUnavailable.php"
+      ],
+      "expectations": [
+        "No PHP file of the fixture is reported as BLOCKING",
+        "The use of Psr\\Log\\LoggerInterface in GenerateFizzBuzz.php is not reported as a violation",
+        "The review states that Deptrac could not be executed and that the layer rule is therefore unproven, instead of declaring the layers clean",
+        "The verdict is short: no padding with notes when nothing is blocking",
+        "No Write, Edit or NotebookEdit tool call appears in the transcript"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Relis evals/files/leaky-fizzbuzz/src/FizzBuzz/Infrastructure/Api/GenerateFizzBuzzController.php et dis-moi aussi si la suite générée est correcte.",
+      "expected_output": "The review reports the business logic in the controller as blocking. The correctness bug (product of the divisors instead of two independent tests) is not reported as an architecture finding: it is flagged as out of scope for /code-review.",
+      "files": [
+        "evals/files/leaky-fizzbuzz/src/FizzBuzz/Infrastructure/Api/GenerateFizzBuzzController.php"
+      ],
+      "expectations": [
+        "The controller is reported as BLOCKING for business logic, pointing at line 17",
+        "The divisor-product correctness issue is not listed as an architecture finding",
+        "The response redirects the correctness question to /code-review or explicitly marks it out of the review's scope",
+        "No Write, Edit or NotebookEdit tool call appears in the transcript"
+      ]
+    }
+  ]
+}

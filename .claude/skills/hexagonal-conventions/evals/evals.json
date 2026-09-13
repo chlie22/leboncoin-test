@@ -1,0 +1,41 @@
+{
+  "skill_name": "hexagonal-conventions",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Je veux horodater chaque appel comptabilisé. Où est-ce que je mets une interface Clock et son implémentation ?",
+      "expected_output": "The answer places the port in Application/Port and its implementation in Infrastructure, never in Domain, and questions whether the need is real since the spec stores no timestamp. It writes no file.",
+      "files": [],
+      "expectations": [
+        "The port is placed under src/FizzBuzz/Application/Port/, not under src/FizzBuzz/Domain/",
+        "The implementation is placed under src/FizzBuzz/Infrastructure/",
+        "The answer points out that the current schema (docs/conception.md §6.2) stores no timestamp, so the change needs a decision before any code",
+        "No Write, Edit or NotebookEdit tool call appears in the transcript"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Pour les stats, ce serait plus simple de créer une entité Statistic avec un repository Doctrine ORM. Tu peux partir là-dessus ?",
+      "expected_output": "The answer refuses to proceed silently: it cites the validated decisions (DBAL without ORM, no entity) and asks the developer whether to reopen them. It writes no file.",
+      "files": [],
+      "expectations": [
+        "The answer cites the validated decision to use Doctrine DBAL without ORM",
+        "The answer states that the model has no entity or aggregate and that FizzBuzzParameters is a value object",
+        "The answer asks the developer to confirm before changing a validated decision instead of implementing the entity",
+        "No Write, Edit or NotebookEdit tool call appears in the transcript"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Où dois-je vérifier que limit ne dépasse pas 10 000 : dans FizzBuzzParameters ou ailleurs ?",
+      "expected_output": "The upper bound is an HTTP contract constraint on the Infrastructure DTO GenerateFizzBuzzQuery; the domain only enforces limit >= 1 in the FizzBuzzParameters constructor.",
+      "files": [],
+      "expectations": [
+        "The 10 000 upper bound is placed as a Range constraint on src/FizzBuzz/Infrastructure/Api/GenerateFizzBuzzQuery",
+        "The answer states that FizzBuzzParameters only enforces limit >= 1 as a domain invariant",
+        "The answer explains that the bound is an operational choice, not a business rule",
+        "No Symfony validation attribute is proposed inside src/FizzBuzz/Domain/"
+      ]
+    }
+  ]
+}

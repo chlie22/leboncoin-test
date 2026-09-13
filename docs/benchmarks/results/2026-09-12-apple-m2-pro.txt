@@ -1,0 +1,41 @@
+Date : 2026-09-12 16:55 CEST | Machine : Apple M2 Pro, 32 Go RAM, macOS 26.6.2, SSD APFS
+
+===== 02-fenetre-exactitude.php =====
+N = 200                                  :  6000 opérations, invariants : OK
+réduction à N = 40, puis appels        :  3000 opérations, invariants : OK
+augmentation à N = 500                  :  4000 opérations, invariants : OK
+N = 1 (cas limite)                       :   500 opérations, invariants : OK
+Comparaisons SQL / modèle : 13504, écarts : 0
+code de sortie : 0
+
+===== 03-json-reponse.php =====
+Environnement : PHP 8.5.2, Darwin 25.6.0 arm64
+
+[1] a         UTF-8 1 octet(s) | JSON défaut Symfony 1 | JSON retenu 1
+[1] é        UTF-8 2 octet(s) | JSON défaut Symfony 6 | JSON retenu 2
+[1] <         UTF-8 1 octet(s) | JSON défaut Symfony 6 | JSON retenu 6
+[1] guillemet UTF-8 1 octet(s) | JSON défaut Symfony 6 | JSON retenu 6
+[1] pizza     UTF-8 4 octet(s) | JSON défaut Symfony 12 | JSON retenu 4
+[2] Texte Zalgo : 1 graphème(s), 501 points de code, 1001 octets
+[3] limit=10000, 100 x 🍕, options 15 : JSON 24.03 Mo, gzip 66.8 Ko, pic mémoire (génération + encodage) 58.1 Mo, 79 ms
+[3] limit=10000, 50 x 🍕, options 15 : JSON 12.03 Mo, gzip 42.1 Ko, pic mémoire (génération + encodage) 29.4 Mo, 39 ms
+[3] limit=10000, 50 x 🍕, options 271 : JSON 4.03 Mo, gzip 21.3 Ko, pic mémoire (génération + encodage) 13.3 Mo, 20 ms
+[3] limit=10000, 50 x ", options 271 : JSON 6.03 Mo, gzip 21.9 Ko, pic mémoire (génération + encodage) 14.1 Mo, 19 ms
+[3] limit=10000, 50 x a, options 271 : JSON 1.03 Mo, gzip 3.5 Ko, pic mémoire (génération + encodage) 4.0 Mo, 4 ms
+
+===== 01-stockage.php =====
+Environnement : PHP 8.5.2, SQLite 3.51.2, Darwin 25.6.0 arm64
+Mode : WAL, synchronous=FULL, disque local
+
+[1] Historique complet, 1000000 combinaisons (chaînes de 12 et 4 caractères) : lecture du top 0.002 ms, écriture 0.046 ms, disque 84 Mo
+[1] Historique complet, 10000000 combinaisons (chaînes de 12 et 4 caractères) : lecture du top 0.002 ms, écriture 0.045 ms, disque 856 Mo
+[2] Fenêtre pleine N=100000 (chaînes courtes) : enregistrement distinct 0.091 ms, enregistrement répété 0.083 ms, lecture complète 0.002 ms, disque 10.9 Mo, invariants : OK
+    Plan de la lecture complète : SCAN s USING INDEX idx_fizzbuzz_hits | SCALAR SUBQUERY 1 | SEARCH fizzbuzz_request_log | SCALAR SUBQUERY 2 | SEARCH fizzbuzz_request_log
+    Plan de l'éviction (décrément) : SEARCH fizzbuzz_request_stat USING INTEGER PRIMARY KEY (rowid=?) | LIST SUBQUERY 2 | SEARCH fizzbuzz_request_log USING INTEGER PRIMARY KEY (rowid<?) | CREATE BLOOM FILTER | CORRELATED SCALAR SUBQUERY 1 | SEARCH l USING COVERING INDEX idx_fizzbuzz_log_stat (stat_id=? AND rowid<?)
+    Plan de l'éviction (suppression du journal) : SEARCH fizzbuzz_request_log USING INTEGER PRIMARY KEY (rowid<?)
+    Plan de l'éviction (suppression des combinaisons) : SEARCH fizzbuzz_request_stat USING COVERING INDEX idx_fizzbuzz_hits (hits=?) | SEARCH fizzbuzz_request_log USING COVERING INDEX idx_fizzbuzz_log_stat (stat_id=?)
+[3] Réduction 100 000 -> 10 000 : 278 ms ; lecture immédiate : window_count=10000 (<= 10 000 : oui), invariants : OK
+[4] Pire cas disque : 300000 enregistrements distincts (fenêtre renouvelée 2 fois), str1 = str2 = 50 emojis : 32 s, disque 101.0 Mo, invariants : OK
+[5] Lecture combinée (ancienne) : 3.376 ms | plan : SCAN s USING INDEX idx_fizzbuzz_hits | SCALAR SUBQUERY 1 | SCAN fizzbuzz_request_log
+[5] Lecture séparée (retenue)  : 0.002 ms | plan : SCAN s USING INDEX idx_fizzbuzz_hits | SCALAR SUBQUERY 1 | SEARCH fizzbuzz_request_log | SCALAR SUBQUERY 2 | SEARCH fizzbuzz_request_log
+code de sortie : 0

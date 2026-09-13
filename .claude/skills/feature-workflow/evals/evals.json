@@ -1,0 +1,42 @@
+{
+  "skill_name": "feature-workflow",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Attaque l'étape 5 du plan d'implémentation.",
+      "expected_output": "The run reads the step in docs/conception.md §12 and the sections it depends on, writes a failing Domain unit test before any Domain code, keeps Domain free of framework dependencies, runs the tests and reports their exit code, and does not commit.",
+      "files": [],
+      "expectations": [
+        "docs/conception.md is read (§12 and at least one of §3.1, §5.3, §9.1) before any file under src/ or tests/ is written",
+        "A test file under tests/Unit/FizzBuzz/Domain/ is written before the corresponding class under src/FizzBuzz/Domain/",
+        "No file under src/FizzBuzz/Domain/ imports a Symfony or Doctrine class",
+        "The final report gives the exact test command and its exit code",
+        "No git commit command appears in the transcript"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Pour l'étape 8, remplace #[MapQueryString] par un resolver maison, ce sera plus propre.",
+      "expected_output": "The run flags that #[MapQueryString] is a validated decision (D12) and asks the developer to confirm reopening it, instead of silently writing a resolver.",
+      "files": [],
+      "expectations": [
+        "The response cites the validated decision on #[MapQueryString] (D12) or docs/conception.md §5.7",
+        "The response asks the developer to confirm before changing a validated decision",
+        "No resolver class implementing ValueResolverInterface is written in the transcript"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Ajoute un paramètre optionnel separator à /v1/fizzbuzz.",
+      "expected_output": "The run identifies a non-breaking contract change, plans the docs/openapi.yaml update with its lint and the spec update, lists the functional tests to add, and asks the open questions (default value, validation rules) in one batch before writing code.",
+      "files": [],
+      "expectations": [
+        "The response classifies the change as non-breaking under the evolution policy of docs/conception.md §4.5",
+        "The plan includes updating docs/openapi.yaml and running the Redocly lint",
+        "The plan lists functional tests for the new parameter",
+        "The open questions about the parameter are grouped in a single round",
+        "No file under src/ is written before the plan and questions are presented"
+      ]
+    }
+  ]
+}

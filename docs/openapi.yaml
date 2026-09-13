@@ -1,0 +1,782 @@
+openapi: 3.1.0
+
+info:
+  title: FizzBuzz API
+  version: 1.0.0
+  summary: Génération de suites FizzBuzz paramétrables et statistiques d'usage.
+  description: |
+    API REST qui génère une suite FizzBuzz paramétrable et expose la requête la plus fréquente.
+    Spécification technique de référence : `docs/conception.md`.
+
+    ## Règles communes
+
+    - **Rate limiting**, appliqué par le reverse proxy avant l'application :
+      1 requête/s par adresse IP (rafale de 3) et 10 requêtes/s au total, `HEAD` compris.
+      Au-delà : `429 Too Many Requests` avec l'en-tête `Retry-After`.
+    - **Erreurs** : toujours au format [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) (`application/problem+json`),
+      qu'elles soient produites par l'application ou par le reverse proxy.
+    - **Corrélation** : chaque réponse, y compris d'erreur, porte un en-tête `X-Request-Id` à communiquer au support.
+    - **Cache** : **toutes** les réponses, succès comme erreurs, portent `Cache-Control: no-store`.
+      Une réponse servie par un cache ne serait pas comptée dans les statistiques.
+    - **Méthodes** : `GET` et `HEAD` sur chaque endpoint. `HEAD` renvoie les mêmes statuts et en-têtes
+      que `GET`, sans corps. Toute autre méthode renvoie `405`.
+    - **Paramètres de requête** : si un paramètre est répété, la dernière valeur est retenue
+      (à éviter). Les paramètres inconnus sont ignorés.
+    - **Encodage** : réponses JSON en UTF-8. Les caractères non-ASCII (accents, emojis) ne sont pas
+      échappés ; seuls `<`, `>`, `&`, `'` et `"` le sont.
+
+    ## Erreurs de paramètres (400)
+
+    Toute erreur sur les paramètres renvoie `400` avec la liste des `violations` :
+    chaque entrée indique le champ concerné (`propertyPath`) et un message (`title`).
+    Il existe deux familles d'erreurs :
+
+    - **Validation** (paramètre absent ou vide, hors bornes, trop long, caractère de contrôle) :
+      toutes les violations sont renvoyées en une seule réponse.
+    - **Conversion** (valeur impossible à convertir en entier, par exemple `abc`, `3.5` ou `int1[]=3`) :
+      seules les erreurs de conversion sont renvoyées. Les règles de validation ne sont évaluées
+      qu'une fois toutes les conversions réussies.
+
+    ## Comptage des appels et erreurs serveur
+
+    Un appel à `GET /v1/fizzbuzz` est comptabilisé dès que son enregistrement est confirmé, **avant**
+    l'envoi de la réponse. En cas de `500`, `502` ou `504`, ou si la connexion est coupée, le client
+    **ne peut pas savoir** si l'appel a été comptabilisé. Une nouvelle tentative est comptée comme
+    un nouvel appel : aucune déduplication n'est effectuée.
+
+    ## Données publiques
+
+    Les statistiques exposent publiquement les chaînes envoyées par les clients.
+    **N'envoyez jamais de donnée personnelle ou sensible dans `str1` ou `str2`.**
+
+    ## Évolution du contrat
+
+    Les évolutions non cassantes (nouveau champ dans une réponse, nouvel endpoint, nouveau paramètre
+    optionnel) restent en `/v1` : **les clients doivent ignorer les champs inconnus**.
+    Toute évolution cassante (suppression ou renommage d'un champ, changement de type ou de sémantique,
+    resserrement d'une borne) donne lieu à une nouvelle version, `/v2`.
+
+servers:
+  - url: http://localhost:8080
+    description: Environnement local (Docker Compose)
+
+# API publique : aucune authentification, choix documenté (docs/conception.md §4.2 et §14.1).
+security: []
+
+tags:
+  - name: FizzBuzz
+    description: Génération de suites.
+  - name: Statistics
+    description: Requête la plus fréquente sur une fenêtre glissante.
+  - name: Operations
+    description: Sondes techniques, réservées au réseau d'exploitation.
+
+paths:
+  /v1/fizzbuzz:
+    parameters:
+      - $ref: '#/components/parameters/Int1'
+      - $ref: '#/components/parameters/Int2'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Str1'
+      - $ref: '#/components/parameters/Str2'
+
+    get:
+      tags: [FizzBuzz]
+      operationId: generateFizzBuzz
+      summary: Générer une suite FizzBuzz
+      description: |
+        Renvoie la liste des nombres de 1 à `limit` (borne incluse), sous forme de chaînes, où :
+
+        - les multiples de `int1` sont remplacés par `str1` ;
+        - les multiples de `int2` sont remplacés par `str2` ;
+        - les multiples de `int1` **et** de `int2` sont remplacés par `str1str2`.
+
+        Chaque appel réussi est **comptabilisé** dans les statistiques (`GET /v1/stats`).
+        **Mode dégradé** : si le stockage des statistiques est indisponible, la suite est quand même
+        renvoyée (`200`), mais l'appel n'est pas comptabilisé.
+      responses:
+        '200':
+          description: Suite générée, composée d'exactement `limit` chaînes.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FizzBuzzResult'
+              examples:
+                enonce:
+                  summary: Exemple de l'énoncé (int1=3, int2=5, limit=15, str1=fizz, str2=buzz)
+                  value: ["1", "2", "fizz", "4", "buzz", "fizz", "7", "8", "fizz", "buzz", "11", "fizz", "13", "14", "fizzbuzz"]
+                diviseursNonPremiersEntreEux:
+                  summary: Diviseurs non premiers entre eux (int1=2, int2=4, limit=8, str1=a, str2=b)
+                  value: ["1", "a", "3", "ab", "5", "a", "7", "ab"]
+                unicode:
+                  summary: Unicode renvoyé sans échappement (int1=2, int2=3, limit=6, str1=🍕, str2=é)
+                  value: ["1", "🍕", "é", "🍕", "5", "🍕é"]
+                zeroEtEspace:
+                  summary: La chaîne "0" et une espace sont des valeurs valides (int1=2, int2=3, limit=6, str1=0, str2=" ")
+                  value: ["1", "0", " ", "0", "5", "0 "]
+        '400':
+          $ref: '#/components/responses/ParameterError'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '414':
+          $ref: '#/components/responses/UriTooLong'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+    head:
+      tags: [FizzBuzz]
+      operationId: checkFizzBuzzParameters
+      summary: Valider les paramètres sans générer
+      description: |
+        Applique les mêmes règles de validation que `GET`, sans corps de réponse,
+        **sans générer la suite et sans comptabiliser l'appel**.
+      responses:
+        '200':
+          description: Paramètres valides (sans corps).
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+        '400':
+          $ref: '#/components/responses/HeadError'
+        '413':
+          $ref: '#/components/responses/HeadError'
+        '414':
+          $ref: '#/components/responses/HeadError'
+        '429':
+          $ref: '#/components/responses/HeadTooManyRequests'
+        '500':
+          $ref: '#/components/responses/HeadError'
+        '502':
+          $ref: '#/components/responses/HeadError'
+        '504':
+          $ref: '#/components/responses/HeadError'
+
+  /v1/stats:
+    get:
+      tags: [Statistics]
+      operationId: getMostFrequentRequest
+      summary: Obtenir la requête la plus fréquente
+      description: |
+        Renvoie la combinaison de paramètres la plus utilisée parmi les **N derniers appels comptabilisés**
+        à `GET /v1/fizzbuzz` (fenêtre glissante, N = `window.size`), avec son nombre de hits
+        **dans cette fenêtre**, et non depuis l'origine.
+
+        - **Identité d'une combinaison** : les 5 paramètres typés. L'ordre dans l'URL est sans effet,
+          `03` et `3` sont identiques, et les chaînes sont sensibles à la casse.
+        - **Égalité de hits** : la combinaison présente dans la fenêtre depuis le plus longtemps est renvoyée.
+        - **Fenêtre vide** : `request` vaut `null` et `hits` vaut `0`.
+        - **Toujours cohérent** : `window.count` est inférieur ou égal à `window.size`, y compris juste
+          après une réduction de la taille de fenêtre.
+        - **Non comptabilisés** : appels invalides, requêtes `HEAD`, appels refusés par le reverse proxy
+          et appels servis en mode dégradé.
+        - Cet endpoint n'accepte aucun paramètre ; ceux fournis sont ignorés.
+      responses:
+        '200':
+          description: Requête la plus fréquente de la fenêtre.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatisticsResult'
+              examples:
+                fenetrePleine:
+                  summary: Fenêtre pleine
+                  value:
+                    request: { int1: 3, int2: 5, limit: 100, str1: fizz, str2: buzz }
+                    hits: 42
+                    window: { type: last_requests, size: 100000, count: 100000 }
+                fenetreEnRemplissage:
+                  summary: Fenêtre en cours de remplissage
+                  value:
+                    request: { int1: 3, int2: 5, limit: 15, str1: fizz, str2: buzz }
+                    hits: 3
+                    window: { type: last_requests, size: 100000, count: 7 }
+                fenetreVide:
+                  summary: Aucun appel comptabilisé
+                  value:
+                    request: null
+                    hits: 0
+                    window: { type: last_requests, size: 100000, count: 0 }
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '414':
+          $ref: '#/components/responses/UriTooLong'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/StatisticsUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+    head:
+      tags: [Statistics]
+      operationId: headMostFrequentRequest
+      summary: En-têtes de la requête la plus fréquente
+      description: Mêmes statuts et en-têtes que `GET /v1/stats`, sans corps.
+      responses:
+        '200':
+          description: Statistiques disponibles (sans corps).
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+        '413':
+          $ref: '#/components/responses/HeadError'
+        '414':
+          $ref: '#/components/responses/HeadError'
+        '429':
+          $ref: '#/components/responses/HeadTooManyRequests'
+        '500':
+          $ref: '#/components/responses/HeadError'
+        '502':
+          $ref: '#/components/responses/HeadError'
+        '503':
+          $ref: '#/components/responses/HeadError'
+        '504':
+          $ref: '#/components/responses/HeadError'
+
+  /healthz:
+    get:
+      tags: [Operations]
+      operationId: getHealth
+      summary: Sonde de disponibilité (readiness)
+      description: |
+        **Réservé au réseau d'exploitation** (load balancer, orchestrateur) : tout autre appelant
+        reçoit `403`. Non soumis au rate limiting. Non versionné.
+
+        Répond `200` tant que l'application peut générer des suites. `status` vaut `degraded`
+        lorsque seul le stockage des statistiques est indisponible : la génération reste servie,
+        et l'instance ne doit pas être retirée du routage.
+      x-internal: true
+      responses:
+        '200':
+          description: L'application peut servir des requêtes.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+              examples:
+                ok:
+                  summary: Tout fonctionne
+                  value: { status: ok, checks: { statistics: ok } }
+                degraded:
+                  summary: Stockage des statistiques indisponible
+                  value: { status: degraded, checks: { statistics: unavailable } }
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+    head:
+      tags: [Operations]
+      operationId: headHealth
+      summary: Sonde de disponibilité, sans corps
+      description: |
+        Mêmes statuts, en-têtes et restriction réseau que `GET /healthz`, sans corps.
+        Le statut `degraded` n'étant porté que par le corps, un `200` ne permet pas de le distinguer de `ok`.
+      x-internal: true
+      responses:
+        '200':
+          description: L'application peut servir des requêtes (sans corps).
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+        '403':
+          $ref: '#/components/responses/HeadError'
+        '413':
+          $ref: '#/components/responses/HeadError'
+        '502':
+          $ref: '#/components/responses/HeadError'
+        '504':
+          $ref: '#/components/responses/HeadError'
+
+components:
+  parameters:
+    Int1:
+      name: int1
+      in: query
+      required: true
+      description: >-
+        Premier diviseur. Entier décimal composé uniquement de chiffres ; les zéros initiaux
+        sont acceptés (`03` vaut `3`). Ses multiples sont remplacés par `str1`.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 2147483647
+      example: 3
+
+    Int2:
+      name: int2
+      in: query
+      required: true
+      description: >-
+        Second diviseur. Mêmes règles que `int1`. Ses multiples sont remplacés par `str2`.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 2147483647
+      example: 5
+
+    Limit:
+      name: limit
+      in: query
+      required: true
+      description: Borne haute (incluse) de la suite. Entier décimal.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 10000
+      example: 15
+
+    Str1:
+      name: str1
+      in: query
+      required: true
+      description: >-
+        Texte qui remplace les multiples de `int1`. De 1 à 50 caractères Unicode (comptés en points
+        de code), sans aucun caractère de contrôle, y compris en fin de chaîne (saut de ligne,
+        retour chariot, tabulation, NUL). Les espaces et la chaîne `0` sont des valeurs valides ;
+        une chaîne vide est refusée comme un paramètre absent. Sensible à la casse. Visible
+        publiquement dans les statistiques : ne jamais y placer de donnée sensible.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 50
+        # Syntaxe ECMA-262 (JSON Schema) : sans drapeau multiligne, « $ » n'accepte pas de saut de ligne
+        # final. Côté PHP (PCRE), la règle équivalente utilise l'ancre de fin stricte (docs/conception.md §5.7).
+        pattern: '^\P{Cc}+$'
+      example: fizz
+
+    Str2:
+      name: str2
+      in: query
+      required: true
+      description: >-
+        Texte qui remplace les multiples de `int2`. Mêmes règles que `str1`.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 50
+        pattern: '^\P{Cc}+$'
+      example: buzz
+
+  headers:
+    XRequestId:
+      description: Identifiant unique de la requête, présent dans les logs du service.
+      schema:
+        type: string
+        pattern: '^[0-9a-f]{32}$'
+      example: 5f0c3a9e1b7d4e2a8c6f0b1d2e3a4b5c
+
+    CacheControl:
+      description: Les réponses ne doivent pas être mises en cache.
+      schema:
+        type: string
+        const: no-store
+
+    RetryAfter:
+      description: Délai minimal, en secondes, avant de réessayer.
+      schema:
+        type: integer
+        minimum: 1
+      example: 1
+
+  schemas:
+    FizzBuzzResult:
+      description: >-
+        Suite de 1 à `limit`. L'élément d'index `i - 1` vaut la substitution applicable à `i`,
+        ou `i` écrit en décimal.
+      type: array
+      minItems: 1
+      maxItems: 10000
+      items:
+        type: string
+
+    FizzBuzzRequest:
+      description: Combinaison des 5 paramètres d'un appel à `GET /v1/fizzbuzz`.
+      type: object
+      required: [int1, int2, limit, str1, str2]
+      properties:
+        int1:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        int2:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        str1:
+          type: string
+          minLength: 1
+          maxLength: 50
+        str2:
+          type: string
+          minLength: 1
+          maxLength: 50
+
+    StatisticsResult:
+      type: object
+      required: [request, hits, window]
+      properties:
+        request:
+          description: Combinaison la plus fréquente de la fenêtre, ou `null` si la fenêtre est vide.
+          oneOf:
+            - $ref: '#/components/schemas/FizzBuzzRequest'
+            - type: 'null'
+        hits:
+          description: Nombre d'occurrences de la combinaison **dans la fenêtre**.
+          type: integer
+          minimum: 0
+        window:
+          $ref: '#/components/schemas/StatisticsWindow'
+
+    StatisticsWindow:
+      description: Périmètre sur lequel les statistiques sont calculées.
+      type: object
+      required: [type, size, count]
+      properties:
+        type:
+          description: Fenêtre exprimée en nombre d'appels comptabilisés, et non en durée.
+          type: string
+          const: last_requests
+        size:
+          description: Taille configurée de la fenêtre (N).
+          type: integer
+          minimum: 1
+        count:
+          description: >-
+            Nombre d'appels actuellement retenus. Toujours inférieur ou égal à `size`, y compris
+            juste après une réduction de la taille de fenêtre.
+          type: integer
+          minimum: 0
+
+    Health:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          description: >-
+            `ok` si tout fonctionne ; `degraded` si seul le stockage des statistiques est indisponible
+            (la génération reste servie).
+          type: string
+          enum: [ok, degraded]
+        checks:
+          type: object
+          required: [statistics]
+          properties:
+            statistics:
+              type: string
+              enum: [ok, unavailable]
+
+    Problem:
+      description: Erreur au format RFC 9457.
+      type: object
+      required: [type, title, status]
+      properties:
+        type:
+          description: URI identifiant la catégorie d'erreur.
+          type: string
+          format: uri-reference
+        title:
+          description: Résumé lisible de la catégorie d'erreur.
+          type: string
+        status:
+          description: Code de statut HTTP.
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          description: Explication lisible propre à cette occurrence. Ne contient jamais de détail interne.
+          type: string
+
+    ValidationProblem:
+      description: Erreur de paramètres, avec la liste des violations.
+      allOf:
+        - $ref: '#/components/schemas/Problem'
+        - type: object
+          required: [detail, violations]
+          properties:
+            violations:
+              type: array
+              minItems: 1
+              items:
+                $ref: '#/components/schemas/Violation'
+
+    Violation:
+      type: object
+      required: [propertyPath, title]
+      properties:
+        propertyPath:
+          description: Nom du paramètre concerné.
+          type: string
+          examples: [int1, limit, str1]
+        title:
+          description: Message lisible décrivant la violation.
+          type: string
+        template:
+          description: Modèle du message, avant substitution des paramètres.
+          type: string
+        parameters:
+          description: Valeurs substituées dans le modèle du message.
+          type: object
+          additionalProperties:
+            type: string
+        type:
+          description: Identifiant stable de la règle enfreinte (`urn:uuid:…`), absent pour une erreur de conversion.
+          type: string
+
+  responses:
+    ParameterError:
+      description: Paramètres invalides.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ValidationProblem'
+          examples:
+            validation:
+              summary: Paramètre manquant et borne dépassée (?int1=3&int2=5&limit=0&str2=buzz)
+              value:
+                type: https://symfony.com/errors/validation
+                title: Validation Failed
+                status: 400
+                detail: |-
+                  limit: This value should be between 1 and 10000.
+                  str1: This parameter is required and must not be empty.
+                violations:
+                  - propertyPath: limit
+                    title: 'This value should be between 1 and 10000.'
+                    template: 'This value should be between {{ min }} and {{ max }}.'
+                    parameters: { '{{ value }}': '0', '{{ min }}': '1', '{{ max }}': '10000' }
+                  - propertyPath: str1
+                    title: 'This parameter is required and must not be empty.'
+                    template: 'This parameter is required and must not be empty.'
+                    parameters: { '{{ value }}': 'null' }
+            chaineVide:
+              summary: Chaîne vide, traitée comme un paramètre absent (?int1=3&int2=5&limit=15&str1=&str2=buzz)
+              value:
+                type: https://symfony.com/errors/validation
+                title: Validation Failed
+                status: 400
+                detail: 'str1: This parameter is required and must not be empty.'
+                violations:
+                  - propertyPath: str1
+                    title: 'This parameter is required and must not be empty.'
+                    template: 'This parameter is required and must not be empty.'
+                    parameters: { '{{ value }}': '""' }
+            conversion:
+              summary: Valeur impossible à convertir en entier (?int1=abc&int2=5&limit=15&str1=fizz&str2=buzz)
+              value:
+                type: https://symfony.com/errors/validation
+                title: Validation Failed
+                status: 400
+                detail: 'int1: This value should be of type int.'
+                violations:
+                  - propertyPath: int1
+                    title: 'This value should be of type int.'
+                    template: 'This value should be of type {{ type }}.'
+                    parameters: { '{{ type }}': int }
+
+    Forbidden:
+      description: Endpoint réservé au réseau d'exploitation.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: about:blank
+            title: Forbidden
+            status: 403
+
+    PayloadTooLarge:
+      description: Corps de requête de plus de 1 Ko, rejeté par le reverse proxy. Les endpoints n'attendent aucun corps.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: about:blank
+            title: Payload Too Large
+            status: 413
+
+    UriTooLong:
+      description: URL de plus de 8 Ko, rejetée par le reverse proxy.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: about:blank
+            title: URI Too Long
+            status: 414
+
+    TooManyRequests:
+      description: >-
+        Quota dépassé (1 requête/s par IP avec une rafale de 3, ou 10 requêtes/s au total).
+        Rejeté par le reverse proxy : l'appel n'est pas comptabilisé.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: about:blank
+            title: Too Many Requests
+            status: 429
+
+    InternalError:
+      description: >-
+        Erreur inattendue. Aucun détail interne n'est exposé. Sur `GET /v1/fizzbuzz`, le client ne peut
+        pas savoir si l'appel a été comptabilisé.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://tools.ietf.org/html/rfc2616#section-10
+            title: An error occurred
+            status: 500
+            detail: Internal Server Error
+
+    StatisticsUnavailable:
+      description: >-
+        Stockage des statistiques temporairement indisponible. Seule la lecture des statistiques est
+        concernée : la génération reste servie.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://tools.ietf.org/html/rfc2616#section-10
+            title: An error occurred
+            status: 503
+            detail: Service Unavailable
+
+    BadGateway:
+      description: >-
+        L'application n'a pas pu répondre au reverse proxy. Sur `GET /v1/fizzbuzz`, l'appel peut
+        néanmoins avoir été comptabilisé si l'échec est survenu après l'enregistrement : le client
+        ne peut pas le déterminer.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: about:blank
+            title: Bad Gateway
+            status: 502
+
+    GatewayTimeout:
+      description: >-
+        L'application n'a pas répondu dans le délai imparti. Sur `GET /v1/fizzbuzz`, l'appel peut
+        néanmoins avoir été comptabilisé : le client ne peut pas le déterminer.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: about:blank
+            title: Gateway Timeout
+            status: 504
+
+    HeadError:
+      description: >-
+        Erreur en réponse à une requête `HEAD` : même statut que la requête `GET` équivalente,
+        sans corps.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+
+    HeadTooManyRequests:
+      description: Quota dépassé en réponse à une requête `HEAD`, sans corps.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
