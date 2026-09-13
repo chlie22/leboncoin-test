@@ -562,7 +562,7 @@ Le mode dégradé **ne garantit donc pas** un 200 dans tous les cas : il couvre 
 #### « Journaliser » : un signal d'exploitation, pas une sauvegarde des appels
 
 - **Ce que c'est** : une ligne de log JSON de niveau `warning` sur stderr (Monolog), que la plateforme de logs collecte. Elle sert à **détecter et alerter**, pas à conserver des données.
-- **Contenu** : nom de l'événement (`statistics.record_skipped`), classe de l'erreur, `request_id`. **Jamais les paramètres** : on ne pourrait pas reconstruire les appels depuis les logs, et c'est voulu.
+- **Contenu** : nom de l'événement (`statistics.record_skipped`), `error_class` (toujours `StatisticsStoreUnavailable`) et `cause_class` (classe de l'erreur de stockage d'origine, ou `null`), `request_id`. **Uniquement des noms de classes** : ni message d'erreur, qui peut contenir des valeurs SQL, ni **paramètres** : on ne pourrait pas reconstruire les appels depuis les logs, et c'est voulu.
 - **Volume** : borné par le rate limiting (10 lignes/s au plus).
 - **Aucune réconciliation**, acceptable pour trois raisons :
   1. les statistiques sont secondaires (bonus) ;
@@ -653,7 +653,7 @@ Exécutée dans `Connection::transactional()` de DBAL. Toutes les valeurs sont d
 - **Même SQL pour la réduction au démarrage** : étapes 3 à 6, en `BEGIN IMMEDIATE` (§6.6).
 - `RETURNING` et `UPDATE … WHERE id IN` nécessitent SQLite ≥ 3.35 ; l'image `php:8.5.10-fpm` (Debian 13 trixie) embarque SQLite 3.46.1 **[source]** (`SQLite3::version()` et `sqlite_version()`, 2026-09-13).
 
-**Invariants après chaque commit** (vérifiés par les tests de contrat et d'intégration) :
+**Invariants après chaque commit** (le 1 par les tests de contrat, via `windowCount` ; les 2 à 5, qui ne sont pas observables par le port, au niveau des tables par les tests d'intégration SQLite) :
 1. le journal contient au plus N lignes, et ce sont les derniers appels confirmés ;
 2. la somme des `hits` est égale au nombre de lignes du journal ;
 3. le `hits` de chaque combinaison est égal à son nombre de références dans le journal ;
@@ -678,7 +678,7 @@ LIMIT 1;
   - `max(id) - min(id)` dans une même sous-requête : parcours complet du journal, **3,376 ms** ;
   - deux sous-requêtes séparées : deux recherches par clé, **0,002 ms** *(retenu)*.
 - `max - min + 1` n'est exact que parce que les identifiants du journal sont **contigus** (§6.2). Il évite un `COUNT(*)` sur 100 000 lignes.
-- **Fenêtre vide** : aucune ligne n'est renvoyée ; le cas d'usage construit `request: null` avec `window.count = 0`.
+- **Fenêtre vide** : aucune ligne n'est renvoyée ; l'adaptateur renvoie un `RequestStatistics` avec `request: null`, `hits: 0` et `window.count = 0`, que `GetMostFrequentRequest` restitue tel quel.
 
 ### 6.5 Configuration pour la production
 
@@ -1027,8 +1027,8 @@ Les tests ci-dessous sont **à écrire** lors de l'implémentation ; aucun n'est
 |---|---|---|---|
 | **Unitaire — Domain** | `FizzBuzzParameters`, `FizzBuzzGenerator` | aucune | tous les cas du §3.2, dont `"0"`, espace et chaîne vide (niveau domaine) ; diviseurs 2 et 4 ; invariants violés sans Symfony |
 | **Unitaire — Application** | `GenerateFizzBuzz`, `GetMostFrequentRequest` | `InMemoryRequestStatisticsStore` (avec un mode « en panne ») + logger de test | `record()` appelé exactement une fois ; résultat restitué intact ; stockage en panne → liste quand même retournée et `warning` journalisé, sans nouvelle tentative ; lecture sans incrément ; lecture en panne → exception propagée |
-| **Contrat** | `RequestStatisticsStore` | exécuté par **les deux** adaptateurs | invariants du §6.3 ; fenêtre N = 1 et petites fenêtres ; frontière N / N+1 ; entrée et sortie d'une même combinaison ; ancien gagnant qui décline ; départage (exemple du §3.4) ; `windowCount ≤ windowSize` |
-| **Intégration SQLite** | `SqliteRequestStatisticsStore`, `SqliteConnectionPragmas`, `ApplyStatisticsWindowCommand` | fichier SQLite temporaire | rollback complet sur panne injectée ; migrations rejouables ; persistance après réouverture ; pragmas effectifs sur une nouvelle connexion ; `STATS_WINDOW_SIZE` invalide rejeté ; **plans d'exécution** de la lecture et de l'éviction sans parcours du journal (R03) ; **réduction de N puis lecture immédiate** : `count ≤ size` et gagnant de la nouvelle fenêtre (R09) |
+| **Contrat** | `RequestStatisticsStore` | exécuté par **les deux** adaptateurs | invariant 1 du §6.3 (observable par le port) ; fenêtre N = 1 et petites fenêtres ; frontière N / N+1 ; entrée et sortie d'une même combinaison ; ancien gagnant qui décline ; départage (exemple du §3.4) ; `windowCount ≤ windowSize` |
+| **Intégration SQLite** | `SqliteRequestStatisticsStore`, `SqliteConnectionPragmas`, `ApplyStatisticsWindowCommand` | fichier SQLite temporaire | invariants 2 à 5 du §6.3 vérifiés sur les tables ; rollback complet sur panne injectée ; migrations rejouables ; persistance après réouverture ; pragmas effectifs sur une nouvelle connexion ; `STATS_WINDOW_SIZE` invalide rejeté ; **plans d'exécution** de la lecture et de l'éviction sans parcours du journal (R03) ; **réduction de N puis lecture immédiate** : `count ≤ size` et gagnant de la nouvelle fenêtre (R09) |
 | **Intégration — pannes** | adaptateur SQLite | fichier verrouillé ou inaccessible | **attente de verrou** : un verrou tenu au-delà de 200 ms produit `StatisticsStoreUnavailable` en ~200 ms ; **échec rapide** : fichier en lecture seule → erreur immédiate. La **lenteur d'entrées-sorties** n'est pas reproductible de façon fiable : elle est couverte par le timeout FPM et la surveillance, pas par un test (R04) |
 | **Concurrence** | SQLite, plusieurs processus | fichier partagé | plusieurs processus PHP enregistrent en parallèle : aucune perte, aucun doublon ; somme des hits = min(appels confirmés, N) ; lecture concurrente cohérente |
 | **Fonctionnel** | les 3 endpoints | `WebTestCase` + SQLite de test | **matrice complète du §3.3** (code et message attendus), dont absent, vide, `"0"`, espace et chaîne normale (R01), saut de ligne final et interne, retour chariot, tabulation, NUL (R02) ; pire cas `limit = 10 000` en moins de 6,1 Mo ; emoji renvoyé non échappé ; **HEAD** sur les 3 endpoints, sans corps ni comptage ; 400 non comptés ; ordre des paramètres ; stats vides et après N appels, avec `window` et départage ; 404/405/503 en problem+json ; `X-Request-Id` dans les logs ; stockage indisponible → `/v1/fizzbuzz` 200, `/v1/stats` 503, `/healthz` 200 `degraded` ; **erreur après commit** (exception injectée pendant l'encodage) → 500 **et** appel compté (R12) |
@@ -1051,13 +1051,13 @@ Base de test : `DATABASE_URL` défini dans `.env.test`, tables vidées dans `set
 
 ### 9.3 Dépendances Composer
 
-**Runtime** : `symfony/framework-bundle`, `symfony/runtime`, `symfony/serializer`, `symfony/property-access`, `symfony/property-info`, `symfony/validator`, `symfony/monolog-bundle`, `doctrine/dbal`, `doctrine/doctrine-bundle`, `doctrine/doctrine-migrations-bundle`.
+**Runtime** : `symfony/framework-bundle`, `symfony/runtime`, `psr/log`, `symfony/serializer`, `symfony/property-access`, `symfony/property-info`, `symfony/validator`, `symfony/monolog-bundle`, `doctrine/dbal`, `doctrine/doctrine-bundle`, `doctrine/doctrine-migrations-bundle`.
 
 **Dev** : `phpunit/phpunit` 13, `symfony/browser-kit`, `phpstan/phpstan`, `phpstan/phpstan-symfony`, `friendsofphp/php-cs-fixer`, `deptrac/deptrac`.
 
 Versions relevées sur Packagist le 2026-09-11 : `symfony/framework-bundle` 8.1.6, `doctrine/doctrine-bundle` 3.3, `doctrine/doctrine-migrations-bundle` 4.0, `phpunit/phpunit` 13.3, `phpstan/phpstan` 2.2, `deptrac/deptrac` 4.7.1.
 
-Chaque paquet est installé à l'étape du plan qui s'en sert (§12). **[source]** `composer show`, 2026-09-13 : à l'étape 2, `phpunit/phpunit` 13.3.3, `phpstan/phpstan` 2.2.14, `phpstan/phpstan-symfony` 2.0.20, `friendsofphp/php-cs-fixer` 3.95.25 et `deptrac/deptrac` 4.7.1. `symfony/browser-kit` arrive à l'étape 8, avec les premiers `WebTestCase`.
+Chaque paquet est installé à l'étape du plan qui s'en sert (§12). **[source]** `composer show`, 2026-09-13 : à l'étape 2, `phpunit/phpunit` 13.3.3, `phpstan/phpstan` 2.2.14, `phpstan/phpstan-symfony` 2.0.20, `friendsofphp/php-cs-fixer` 3.95.25 et `deptrac/deptrac` 4.7.1. `symfony/browser-kit` arrive à l'étape 8, avec les premiers `WebTestCase`. `psr/log` 3.0.2 est déclaré directement à l'étape 6 : `Application` en dépend (`LoggerInterface`), il n'arrive plus seulement par Symfony **[source]** `composer show psr/log`, 2026-09-13.
 
 ### 9.4 Test de charge (k6) — à réaliser
 
@@ -1105,7 +1105,7 @@ leboncoin-test/
 │   │   └── validator.yaml
 │   ├── preload.php
 │   ├── routes.yaml                         # routing.controllers : services portant #[Route], pas de scan de dossier [source] Symfony 8.1
-│   └── services.yaml                       # alias RequestStatisticsStore → SQLite ; exclusion Domain / Model
+│   └── services.yaml                       # alias RequestStatisticsStore → SQLite (étape 7) ; exclusion de FizzBuzzParameters, des exceptions et de Model
 ├── docker/
 │   ├── nginx/
 │   │   ├── templates/default.conf.template # quotas, real_ip, logs, gzip, erreurs JSON internes, /healthz restreint
@@ -1172,6 +1172,7 @@ leboncoin-test/
 │   ├── Smoke/smoke.sh                                           # via Nginx : quotas, erreurs JSON, en-têtes, logs, démarrage
 │   ├── Load/fizzbuzz.js                                         # k6 : démonstration de l'objectif de latence
 │   ├── Support/InMemoryRequestStatisticsStore.php
+│   ├── Support/RecordingLogger.php                             # logger PSR-3 de test
 │   └── bootstrap.php
 ├── var/                                    # ignoré par git
 ├── .dockerignore  .editorconfig  .env  .env.test  .gitignore

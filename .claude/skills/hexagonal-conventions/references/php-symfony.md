@@ -41,7 +41,7 @@ tests/
 ├── Functional/
 ├── Smoke/smoke.sh
 ├── Load/fizzbuzz.js
-└── Support/InMemoryRequestStatisticsStore.php
+└── Support/{InMemoryRequestStatisticsStore.php, RecordingLogger.php}
 ```
 
 A new class goes into an existing directory of this tree. A new directory is a design change: check it against `docs/conception.md` §10 first.
@@ -66,7 +66,7 @@ A new class goes into an existing directory of this tree. A new directory is a d
 
 - `declare(strict_types=1)` in every file. `final` by default. `readonly` on value objects, DTOs and read models. No `mixed` for convenience.
 - Constructor injection only; no service locator.
-- `config/services.yaml`: alias `RequestStatisticsStore` to `SqliteRequestStatisticsStore`; exclude `src/FizzBuzz/Domain/` value objects and `src/FizzBuzz/Application/Model/` from service registration.
+- `config/services.yaml`: alias `RequestStatisticsStore` to `SqliteRequestStatisticsStore`; exclude `src/FizzBuzz/Domain/FizzBuzzParameters.php`, both `Exception/` directories and `src/FizzBuzz/Application/Model/` from service registration. Never exclude all of `Domain/`: `FizzBuzzGenerator` must stay injectable.
 - `config/routes.yaml`: `resource: routing.controllers` (Symfony 8.1 recipe) loads `#[Route]` attributes from registered service classes (`AttributeServicesLoader`), not from a folder scan. Controllers live in `src/FizzBuzz/Infrastructure/Api/` and `src/Shared/Infrastructure/Http/`, not `src/Controller/`, and are registered by the `App\` resource in `config/services.yaml`.
 - Window size: `%env(int:STATS_WINDOW_SIZE)%`, injected into the SQLite adapter, which rejects values below 1.
 - Exception to status mapping lives in `config/packages/framework.yaml` (`framework.exceptions`), not in a custom subscriber.
