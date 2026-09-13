@@ -1,0 +1,24 @@
+# Surcharge locale, chargée automatiquement par docker compose (docs/conception.md §7.7) :
+# cible dev, code monté depuis l'hôte, var/ isolé de celui de l'hôte (le cache Symfony contient
+# des chemins absolus, et PHPStan sur l'hôte lit var/cache/dev), données séparées de la prod.
+services:
+  php:
+    build:
+      target: dev
+      args:
+        HOST_UID: ${HOST_UID:-33}
+        HOST_GID: ${HOST_GID:-33}
+    image: fizzbuzz-php:dev
+    environment:
+      APP_ENV: dev
+      XDEBUG_MODE: ${XDEBUG_MODE:-off}
+    volumes:
+      - .:/app
+      - php-var:/app/var
+      - stats-data-dev:/app/var/data
+    read_only: false
+    tmpfs: !reset []
+
+volumes:
+  php-var:
+  stats-data-dev:

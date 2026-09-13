@@ -1,0 +1,103 @@
+# Serveur de l'API (docs/conception.md §7.3). L'image nginx-unprivileged rend ce template au démarrage
+# en ne substituant que les variables d'environnement définies : $request_id, $uri, etc. restent intacts.
+
+# Quotas (§7.4)
+limit_req_zone $binary_remote_addr zone=per_ip:10m rate=${RATE_LIMIT_PER_IP};
+limit_req_zone $server_name        zone=global:1m  rate=${RATE_LIMIT_GLOBAL};
+limit_req_status 429;
+limit_req_log_level info;
+
+# Vraie IP client : X-Forwarded-For n'est accepté que des proxys de confiance
+set_real_ip_from  ${TRUSTED_PROXY_CIDR};
+real_ip_header    X-Forwarded-For;
+real_ip_recursive on;
+
+# Log d'accès JSON ; $uri est le chemin seul : str1 et str2 ne sont pas journalisés (§8.1)
+log_format json escape=json '{"time":"$time_iso8601","request_id":"$request_id","client":"$remote_addr",'
+  '"method":"$request_method","path":"$uri","status":$status,'
+  '"duration":$request_time,"upstream_duration":"$upstream_response_time","bytes":$body_bytes_sent}';
+
+server {
+    listen 8080 default_server;
+    server_name fizzbuzz;
+    server_tokens off;
+    access_log /dev/stdout json;
+    error_log  /dev/stderr error;
+    client_max_body_size 1k;
+    # Ligne de requête limitée à 8 Ko : au-delà, 414 (§4.4). Explicite pour que la borne ne dépende pas d'un défaut.
+    large_client_header_buffers 4 8k;
+
+    include /etc/nginx/snippets/headers.conf;
+
+    gzip on;
+    gzip_types application/json application/problem+json;
+    gzip_min_length 1024;
+
+    # Erreurs produites par Nginx : URI interne, jamais une location nommée (un 414 précoce a une URI vide).
+    error_page 403 /_errors/403;
+    error_page 413 /_errors/413;
+    error_page 414 /_errors/414;
+    error_page 429 /_errors/429;
+    error_page 502 /_errors/502;
+    error_page 504 /_errors/504;
+
+    # Sonde : hors quota, réseau d'exploitation seulement
+    location = /healthz {
+        allow 127.0.0.1;
+        allow ${TRUSTED_PROXY_CIDR};
+        deny  all;
+        include /etc/nginx/snippets/fastcgi-app.conf;
+    }
+
+    location / {
+        # Ordre voulu : seule la dernière zone compare le burst et écrit l'excédent sous le même verrou ;
+        # les précédentes écrivent plus tard, et deux workers simultanés peuvent alors dépasser le burst
+        # [source] ngx_http_limit_req_module.c, Nginx 1.30.4. per_ip en dernier garantit la rafale de 3.
+        limit_req zone=global burst=${RATE_LIMIT_GLOBAL_BURST} nodelay;
+        limit_req zone=per_ip burst=${RATE_LIMIT_PER_IP_BURST} nodelay;
+        include /etc/nginx/snippets/fastcgi-app.conf;
+    }
+
+    location = /_errors/403 {
+        internal;
+        include /etc/nginx/snippets/headers.conf;
+        default_type application/problem+json;
+        return 403 '{"type":"about:blank","title":"Forbidden","status":403}';
+    }
+
+    location = /_errors/413 {
+        internal;
+        include /etc/nginx/snippets/headers.conf;
+        default_type application/problem+json;
+        return 413 '{"type":"about:blank","title":"Payload Too Large","status":413}';
+    }
+
+    location = /_errors/414 {
+        internal;
+        include /etc/nginx/snippets/headers.conf;
+        default_type application/problem+json;
+        return 414 '{"type":"about:blank","title":"URI Too Long","status":414}';
+    }
+
+    location = /_errors/429 {
+        internal;
+        include /etc/nginx/snippets/headers.conf;
+        add_header Retry-After 1 always;
+        default_type application/problem+json;
+        return 429 '{"type":"about:blank","title":"Too Many Requests","status":429}';
+    }
+
+    location = /_errors/502 {
+        internal;
+        include /etc/nginx/snippets/headers.conf;
+        default_type application/problem+json;
+        return 502 '{"type":"about:blank","title":"Bad Gateway","status":502}';
+    }
+
+    location = /_errors/504 {
+        internal;
+        include /etc/nginx/snippets/headers.conf;
+        default_type application/problem+json;
+        return 504 '{"type":"about:blank","title":"Gateway Timeout","status":504}';
+    }
+}

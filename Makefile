@@ -9,12 +9,33 @@ EXEC ?=
 PHP = $(EXEC) php
 COMPOSER = $(EXEC) composer
 REDOCLY = npx --yes @redocly/cli@2.52.1
+COMPOSE = docker compose
+SMOKE_BASE_URL ?= http://127.0.0.1:8080
+
+# UID et GID de l'hôte, repris par www-data dans l'image dev (compose.override.yaml).
+export HOST_UID := $(shell id -u)
+export HOST_GID := $(shell id -g)
 
 .DEFAULT_GOAL := help
-.PHONY: help install test test-unit test-integration test-functional lint fix ci benchmarks
+.PHONY: help start stop sh logs build install test test-unit test-integration test-functional smoke lint fix ci benchmarks
 
 help: ## Liste des cibles
 	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  %-18s %s\n", $$1, $$2}'
+
+start: ## Démarre la stack Docker (cible dev en local) et attend que les conteneurs tournent
+	$(COMPOSE) up -d --wait --wait-timeout 60
+
+stop: ## Arrête la stack (les volumes de données sont conservés)
+	$(COMPOSE) down
+
+sh: ## Shell dans le conteneur PHP
+	$(COMPOSE) exec php bash
+
+logs: ## Logs des services, en continu
+	$(COMPOSE) logs -f
+
+build: ## Construit l'image prod (compose.yaml seul, sans la surcharge dev)
+	$(COMPOSE) -f compose.yaml build php
 
 install: ## Installe les dépendances Composer
 	$(COMPOSER) install
@@ -30,6 +51,9 @@ test-integration: ## Tests d'intégration (SQLite, commande de démarrage, concu
 
 test-functional: ## Tests fonctionnels (WebTestCase)
 	$(PHP) vendor/bin/phpunit --testsuite functional
+
+smoke: ## Smoke test via Nginx, contre la stack démarrée (make start)
+	BASE_URL=$(SMOKE_BASE_URL) tests/Smoke/smoke.sh
 
 lint: ## PHP-CS-Fixer (dry-run), container, YAML, PHPStan, Deptrac, OpenAPI
 	$(PHP) vendor/bin/php-cs-fixer check --diff

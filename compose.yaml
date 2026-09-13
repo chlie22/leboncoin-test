@@ -1,0 +1,67 @@
+# Stack de production (docs/conception.md §7.7), pilotée avec `docker compose -f compose.yaml`.
+# Sans -f, compose.override.yaml est chargé automatiquement et bascule php sur la cible dev.
+name: fizzbuzz
+
+services:
+  nginx:
+    image: nginxinc/nginx-unprivileged:1.30.4-alpine
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      RATE_LIMIT_PER_IP: ${RATE_LIMIT_PER_IP:-1r/s}
+      RATE_LIMIT_PER_IP_BURST: ${RATE_LIMIT_PER_IP_BURST:-2}
+      RATE_LIMIT_GLOBAL: ${RATE_LIMIT_GLOBAL:-10r/s}
+      RATE_LIMIT_GLOBAL_BURST: ${RATE_LIMIT_GLOBAL_BURST:-10}
+      TRUSTED_PROXY_CIDR: ${TRUSTED_PROXY_CIDR:-172.30.0.128/25}
+    volumes:
+      - ./docker/nginx/templates:/etc/nginx/templates:ro
+      - ./docker/nginx/snippets:/etc/nginx/snippets:ro
+    # Lecture seule (§7.9) : l'image rend les templates dans conf.d et écrit pid et fichiers temporaires dans /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /etc/nginx/conf.d:uid=101,gid=101,mode=0755
+    depends_on:
+      php:
+        condition: service_started
+        # Nginx résout php:9000 au démarrage : il redémarre quand php est recréé (nouvelle adresse).
+        restart: true
+    networks:
+      - app
+
+  php:
+    build:
+      context: .
+      target: prod
+    image: fizzbuzz-php:prod
+    # Relance en cas d'échec, y compris au démarrage (D16) ; `up --wait --wait-timeout` échoue quand même.
+    restart: unless-stopped
+    environment:
+      APP_ENV: prod
+      APP_SECRET: ${APP_SECRET:-}
+    volumes:
+      - stats-data:/app/var/data
+    # Lecture seule sauf var/ (§7.6) : var/data est le volume, var/share (pool cache.app) et var/log en tmpfs ;
+    # var/cache/prod, préchauffé dans l'image, reste en lecture seule.
+    # Un tmpfs est créé au nom de root : uid et gid le donnent à www-data (33 dans l'image prod).
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/var/share:uid=33,gid=33,mode=0700
+      - /app/var/log:uid=33,gid=33,mode=0700
+    networks:
+      - app
+
+networks:
+  app:
+    ipam:
+      config:
+        # Les conteneurs prennent leur adresse dans ip_range ; la passerelle (172.30.0.1) en est exclue,
+        # donc TRUSTED_PROXY_CIDR ne couvre pas le trafic qui entrerait par elle (§7.4).
+        - subnet: 172.30.0.0/24
+          ip_range: 172.30.0.128/25
+          gateway: 172.30.0.1
+
+volumes:
+  stats-data:

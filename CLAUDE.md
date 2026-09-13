@@ -46,7 +46,19 @@ vendor/bin/phpunit tests/Unit/FizzBuzz/Domain/FizzBuzzGeneratorTest.php --filter
 php docs/benchmarks/02-fenetre-exactitude.php           # exactitude du SQL de fenêtre ; code de sortie ≠ 0 en cas d'écart
 ```
 
-Prévues par la spec (§11.1), créées aux étapes 3, 7, 9 et 9b. Avant de s'en servir, vérifier dans `docs/progress.md` que l'étape correspondante est faite : `make start` / `make stop` (Docker Compose), `make sh`, `make logs`, `make build`, `make migrate`, `make stats-reset`, `make smoke`, `make load-test`.
+Stack Docker (étape 3). Sans `-f`, `docker compose` charge aussi `compose.override.yaml` : cible `dev`, code monté, `www-data` à l'UID de l'hôte (exporté par le `Makefile`). La prod se pilote avec `docker compose -f compose.yaml …`.
+
+```bash
+make start                                              # docker compose up -d --wait --wait-timeout 60 (cible dev)
+make stop                                               # docker compose down ; les volumes de données restent
+make sh                                                 # shell dans le conteneur PHP
+make logs                                               # logs des services, en continu
+make build                                              # image prod : docker compose -f compose.yaml build php
+make smoke                                              # smoke test via Nginx contre la stack démarrée ; SMOKE_BASE_URL pour une autre adresse
+make ci EXEC='docker compose exec -T php'               # vérification complète dans le conteneur (npx reste sur l'hôte)
+```
+
+Prévues par la spec (§11.1), créées aux étapes 7 et 9b. Avant de s'en servir, vérifier dans `docs/progress.md` que l'étape correspondante est faite : `make migrate`, `make stats-reset`, `make load-test`.
 
 ## Architecture
 
@@ -75,7 +87,7 @@ Les fichiers de `.claude/rules/` se chargent automatiquement lorsque Claude lit 
 | `.claude/rules/domain-application.md` | `src/FizzBuzz/Domain/`, `src/FizzBuzz/Application/` | dépendances, invariants, mode dégradé, forme du port |
 | `.claude/rules/persistence-sqlite.md` | `Persistence/`, `Cli/`, `migrations/`, config Doctrine, `docs/benchmarks/` | transaction, éviction, lecture, pragmas, benchmarks à relancer |
 | `.claude/rules/http-api.md` | `Api/`, `src/Shared/Infrastructure/Http/`, `docs/openapi.yaml` | `#[MapQueryString]`, contraintes, `HEAD`, encodage JSON, exceptions |
-| `.claude/rules/nginx-runtime.md` | `docker/`, `Dockerfile`, `compose.yaml` | `Cache-Control`, pages d'erreur, quotas, logs, démarrage |
+| `.claude/rules/nginx-runtime.md` | `docker/`, `Dockerfile`, `compose.yaml`, `compose.override.yaml`, `.dockerignore` | `Cache-Control`, pages d'erreur, quotas et ordre des zones, logs, lecture seule, redémarrage, démarrage |
 | `.claude/rules/testing.md` | `tests/` | niveaux de tests, suite de contrat, matrice fonctionnelle, smoke |
 | `.claude/rules/spec-documents.md` | `docs/conception.md`, `docs/openapi.yaml` | étiquettes de qualification, décisions validées, lint, échappements |
 

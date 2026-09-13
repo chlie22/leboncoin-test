@@ -333,6 +333,8 @@ Cache-Control: no-store
 
 Exemple de réponse 400 : voir §3.3. Le client cite `X-Request-Id` au support (§8.1).
 
+**Exception documentée** : deux rejets précoces de Nginx restent en HTML, hors contrat : un en-tête de requête de plus de 8 Ko (400, `large_client_header_buffers`) et un appel direct à une URI interne `/_errors/*` (404). Les rendre en problem+json imposerait un 400 sans `violations`, incompatible avec `ValidationProblem` ; correction envisageable plus tard (§14).
+
 ### 4.5 Politique d'évolution du contrat
 
 - **Non cassant**, reste en `/v1` : ajout d'un champ dans une réponse, ajout d'un endpoint, ajout d'un paramètre **optionnel**. Les clients doivent **ignorer les champs inconnus**.
@@ -649,7 +651,7 @@ Exécutée dans `Connection::transactional()` de DBAL. Toutes les valeurs sont d
 - **Incrément avant éviction** : si la même combinaison entre et sort dans la même transaction, les deux opérations se compensent, y compris avec N = 1.
 - **Plan d'exécution** **[mesure]** : chacune des étapes 4 à 6 n'utilise que des recherches par clé ou par index, sans parcours du journal. Une première version ensembliste (`UPDATE … FROM` avec agrégat) parcourait tout l'index du journal : **5,5 ms** par appel au lieu de **0,091 ms**. Elle a été écartée.
 - **Même SQL pour la réduction au démarrage** : étapes 3 à 6, en `BEGIN IMMEDIATE` (§6.6).
-- `RETURNING` et `UPDATE … WHERE id IN` nécessitent SQLite ≥ 3.35 ; l'image `php:8.5-fpm` (Debian trixie) embarque SQLite 3.46 **[source]**.
+- `RETURNING` et `UPDATE … WHERE id IN` nécessitent SQLite ≥ 3.35 ; l'image `php:8.5.10-fpm` (Debian 13 trixie) embarque SQLite 3.46.1 **[source]** (`SQLite3::version()` et `sqlite_version()`, 2026-09-13).
 
 **Invariants après chaque commit** (vérifiés par les tests de contrat et d'intégration) :
 1. le journal contient au plus N lignes, et ce sont les derniers appels confirmés ;
@@ -756,9 +758,9 @@ Client ──► [ nginx ] ── quotas, bornes, erreurs JSON ──► [ php (
 - **Deux conteneurs**, un processus chacun.
 - **PHP-FPM n'est jamais exposé** : sinon le rate limiting et les bornes Nginx seraient contournables.
 - Nginx ne contient aucun code : tout est transmis à `public/index.php`.
-- Images : `nginxinc/nginx-unprivileged:stable-alpine` (non-root) et `php:8.5-fpm`.
+- Images, tags figés : `nginxinc/nginx-unprivileged:1.30.4-alpine` (non-root), `php:8.5.10-fpm`, et `composer:2.9.5` pour la construction. Une montée de version est volontaire et repasse `make smoke` sur les stacks dev et prod.
 
-### 7.3 Configuration Nginx (esquisse)
+### 7.3 Configuration Nginx
 
 L'image `nginx-unprivileged` rend au démarrage les fichiers `/etc/nginx/templates/*.template` en substituant **uniquement les variables d'environnement définies** **[source]**. Les variables Nginx comme `$request_id` ne sont pas touchées, et les quotas sont paramétrables sans rebuild.
 
@@ -788,6 +790,7 @@ server {
     access_log /dev/stdout json;
     error_log  /dev/stderr error;
     client_max_body_size 1k;
+    large_client_header_buffers 4 8k;             # ligne de requête > 8 Ko → 414, borne explicite
 
     include /etc/nginx/snippets/headers.conf;    # X-Request-Id, nosniff, Cache-Control
 
@@ -797,7 +800,7 @@ server {
 
     # Erreurs produites par Nginx : redirection vers une URI INTERNE, pas vers une location nommée.
     # Un 414 est émis avant l'analyse de l'URI ; une location nommée échouerait alors avec une URI
-    # vide et produirait un 500 [source]. À confirmer par le smoke test avec une vraie URL > 8 Ko.
+    # vide et produirait un 500 [source]. Vérifié par tests/Smoke/smoke.sh avec une vraie URL de 9 Ko.
     error_page 403 /_errors/403;
     error_page 413 /_errors/413;
     error_page 414 /_errors/414;
@@ -813,8 +816,8 @@ server {
     }
 
     location / {
-        limit_req zone=per_ip burst=${RATE_LIMIT_PER_IP_BURST} nodelay;
         limit_req zone=global burst=${RATE_LIMIT_GLOBAL_BURST} nodelay;
+        limit_req zone=per_ip burst=${RATE_LIMIT_PER_IP_BURST} nodelay;   # en dernier : voir §7.4
         include /etc/nginx/snippets/fastcgi-app.conf;
     }
 
@@ -855,12 +858,13 @@ add_header Cache-Control no-store always;
 
 **Piège Nginx** : une `location` qui déclare son propre `add_header` **n'hérite plus** des `add_header` du niveau `server`. C'est pourquoi `headers.conf` est inclus à nouveau dans chaque location d'erreur.
 
-Esquisse à valider par le smoke test de la CI (§9.1).
+Configuration livrée à l'étape 3 (`docker/nginx/`), vérifiée par `tests/Smoke/smoke.sh` : 403 sur `/healthz`, 413, 414 avec une vraie URL de 9 Ko, 429, en-têtes communs, sur les stacks dev et prod ; le smoke complet (§9.1) arrive à l'étape 9.
 
 ### 7.4 Rate limiting (D10)
 
 **Fonctionnement** **[source]** (documentation et code source de Nginx) :
 - Plusieurs `limit_req` s'appliquent à une même requête. Une requête doit respecter **les deux quotas** : 1 req/s pour son IP **et** 10 req/s pour l'ensemble du service.
+- **L'ordre compte** : seule la **dernière** zone compare le burst et écrit l'excédent sous le même verrou ; les précédentes écrivent plus tard, si bien que des requêtes simultanées traitées par plusieurs workers peuvent dépasser leur burst **[source]** (`ngx_http_limit_req_module.c`, Nginx 1.30.4). La zone par IP est donc déclarée **en dernier**. Constaté sur la stack dev (12 workers), rafales de 5 requêtes simultanées : 4 acceptées dans 2 rafales sur 30 avec la zone par IP en premier, 3 acceptées dans les 30 rafales une fois placée en dernier **[hypothèse]** (observation manuelle du 2026-09-13, hors `docs/benchmarks/`). Le quota global peut, lui, être dépassé de quelques requêtes lors d'arrivées simultanées : il protège la capacité, sa précision au burst près n'est pas requise.
 - Algorithme du **seau percé** (*leaky bucket*) : chaque requête ajoute 1 à un « excédent » qui se vide au rythme de `rate`, et la requête est rejetée si cet excédent dépasse `burst`. Conséquences :
   - `rate=1r/s` avec `burst=2` : **3 requêtes d'affilée** acceptées (1 + 2), puis 1 par seconde en régime continu ;
   - un burst **global** à 0 serait un piège : deux requêtes de clients différents à moins de 100 ms d'intervalle suffiraient à en rejeter une. D'où un burst global de 10, soit une seconde de capacité.
@@ -872,7 +876,9 @@ Esquisse à valider par le smoke test de la CI (§9.1).
 | `RATE_LIMIT_PER_IP_BURST` | `2` | requêtes excédentaires tolérées d'un coup, par IP (rafale totale de 3) |
 | `RATE_LIMIT_GLOBAL` | `10r/s` | débit total du service |
 | `RATE_LIMIT_GLOBAL_BURST` | `10` | absorbe les arrivées simultanées de clients différents |
-| `TRUSTED_PROXY_CIDR` | réseau Docker interne | proxys autorisés à transmettre la vraie IP ; réseau autorisé sur `/healthz` |
+| `TRUSTED_PROXY_CIDR` | `172.30.0.128/25` : plage des conteneurs du réseau Compose `172.30.0.0/24`, passerelle exclue | proxys autorisés à transmettre la vraie IP ; réseau autorisé sur `/healthz` |
+
+**Pourquoi la passerelle est exclue** : sous Linux, le trafic publié depuis l'hôte entrerait par la passerelle du réseau Compose **[hypothèse]**, à confirmer par le smoke de la CI (étape 4). La faire entrer dans `TRUSTED_PROXY_CIDR` ouvrirait `/healthz` à ce trafic et lui permettrait d'imposer son adresse par `X-Forwarded-For`. Sous Docker Desktop 4.53, ce trafic arrive avec une adresse hors du réseau Docker (observation du 2026-09-13) **[hypothèse]**. Dans les deux cas, `tests/Smoke/smoke.sh` vérifie le 403 sur `/healthz` depuis l'hôte, y compris avec un `X-Forwarded-For: 127.0.0.1` forgé.
 
 **Pourquoi les deux quotas** :
 - **Par IP** : un client ne peut pas monopoliser le service. Avec un quota global seul, un unique client abusif bloquerait tout le monde.
@@ -893,7 +899,7 @@ Le quota n'est **pas dupliqué** dans Symfony : le composant RateLimiter nécess
 
 ### 7.5 PHP et PHP-FPM
 
-**Déjà fourni par l'image `php:8.5-fpm`** **[source]** (Dockerfile de l'image) :
+**Déjà fourni par l'image `php:8.5.10-fpm`** **[source]** (Dockerfile de l'image) :
 - `pdo_sqlite` compilé ;
 - logs FPM sur stderr, avec `catch_workers_output = yes`, `decorate_workers_output = no` et `log_limit = 8192` ;
 - `clear_env = no`, `listen = 9000` ;
@@ -908,19 +914,20 @@ Le quota n'est **pas dupliqué** dans Symfony : le composant RateLimiter nécess
 | Directive | Valeur | Pourquoi |
 |---|---|---|
 | `pm` | `static` | nombre de processus prévisible en conteneur |
-| `pm.max_children` | mémoire du conteneur ÷ mémoire d'un processus **mesurée** **[objectif]** | vrai plafond de requêtes simultanées |
+| `pm.max_children` | mémoire du conteneur ÷ mémoire d'un processus **mesurée** **[objectif]** ; `8` provisoire jusqu'à la mesure de l'étape 9b | vrai plafond de requêtes simultanées |
 | `pm.max_requests` | `500` | recycle les processus contre les fuites mémoire |
 | `request_terminate_timeout` | `10s` | coupe une requête bloquée (y compris par une lenteur d'entrées-sorties) et libère le processus ; inférieur au timeout Nginx (15 s) pour que FPM tranche en premier |
 | `ping.path` | `/ping` | sonde de liveness FPM pour un orchestrateur (non routée par Nginx) |
+| `access.log` | `/dev/null` | `docker.conf` publie le log d'accès FPM sur stderr, et son format par défaut `%R - %u %t "%m %r" %s` contient la query string dans `%r` **[source]** (`php-fpm -tt`, `php:8.5.10-fpm`) : `str1` et `str2` y apparaîtraient (§8.1). Le log d'accès est tenu par Nginx |
 
 ### 7.6 Dockerfile PHP multi-stage et séquence de démarrage
 
 | Étape | Contenu |
 |---|---|
-| `base` | `php:8.5-fpm`, `conf.d`, pool FPM, entrypoint |
-| `dev` | Xdebug, Composer, code en bind mount |
+| `base` | `php:8.5.10-fpm`, `conf.d`, pool FPM, entrypoint |
+| `dev` | Xdebug 3.5.3 (désactivé par défaut, `XDEBUG_MODE=off`), Composer 2.9.5, code en bind mount ; `www-data` reprend l'UID et le GID de l'hôte (arguments `HOST_UID`, `HOST_GID`) pour que le code monté reste inscriptible sous Linux comme sous macOS |
 | `build` | `composer install --no-dev --classmap-authoritative`, `composer dump-env prod`, `cache:warmup` (génère le fichier de preload) |
-| `prod` | application copiée depuis `build`, `app.prod.ini`, `var/data` créé et attribué à `www-data`, exécution en `www-data`, système de fichiers en lecture seule sauf `var/` |
+| `prod` | application copiée depuis `build` (code à `root`, `var/` à `www-data`), `app.prod.ini`, `var/data` créé et attribué à `www-data`, exécution en `www-data`, système de fichiers en lecture seule sauf `var/` : `var/data` est le volume ; `var/share` (pool `cache.app`), `var/log` et `/tmp` sont des tmpfs attribués à `www-data` (un tmpfs est créé au nom de `root`) ; `var/cache/prod`, préchauffé dans l'image, reste en lecture seule |
 
 **Séquence de démarrage** (entrypoint, en mode « arrêt à la première erreur ») :
 
@@ -933,16 +940,23 @@ Le quota n'est **pas dupliqué** dans Symfony : le composant RateLimiter nécess
 - **Si l'étape 1 ou 2 échoue** (SQLite inaccessible, droits du volume, `STATS_WINDOW_SIZE` invalide) : le conteneur **s'arrête avec un code d'erreur**. PHP-FPM ne démarre pas, **la génération n'est pas servie**, l'orchestrateur relance le conteneur avec un délai croissant et le healthcheck reste en échec (D16).
 - **Pourquoi échouer plutôt que démarrer en mode dégradé** : au démarrage, un stockage inaccessible signale presque toujours une **erreur de configuration** (volume non monté, droits). Échouer visiblement la révèle immédiatement, au lieu de servir durablement un service sans statistiques. Le mode dégradé couvre les pannes **survenant après** un démarrage réussi.
 - **`exec`** : PHP-FPM remplace le script et reçoit directement les signaux d'arrêt.
-- **`HEALTHCHECK`** sur le conteneur Nginx : `wget` sur `/healthz` depuis `127.0.0.1`, ce qui valide toute la chaîne.
-- **`.dockerignore`** : `var/`, `vendor/`, `.git`, `tests/`, `docs/benchmarks/`.
+- **Livraison** : à l'étape 3, l'entrypoint se limite à `exec "$@"`. Les étapes 1 et 2 de la séquence arrivent à l'étape 7, avec les migrations et `ApplyStatisticsWindowCommand`.
+- **`HEALTHCHECK`** sur le conteneur Nginx : `wget` sur `/healthz` depuis `127.0.0.1`, ce qui valide toute la chaîne. Ajouté à l'étape 9, avec `HealthController` : avant, `/healthz` n'existe pas et `make start` attend seulement que les conteneurs tournent.
+- **`.dockerignore`** : `var/`, `vendor/`, `.git`, `tests/`, `docs/` ; fichiers d'environnement locaux (`.env.local`, `.env.*.local`, `.env.test`) ; outillage et consignes (`.claude`, `CLAUDE*.md`, `AGENTS.md`, `Makefile`, fichiers compose, configurations de PHPStan, Deptrac, PHPUnit, PHP-CS-Fixer et Redocly). `docker/` et `.env` restent dans le contexte de build.
 - **Secrets** : aucun dans l'image. `APP_SECRET` est injecté à l'exécution ; les vraies variables d'environnement l'emportent sur le fichier généré par `dump-env`.
 
 ### 7.7 `compose.yaml`
 
 | Service | Image / cible | Ports | Volumes |
 |---|---|---|---|
-| `nginx` | `nginxinc/nginx-unprivileged:stable-alpine` + templates et snippets | `8080:8080` | `docker/nginx` en lecture seule |
-| `php` | `Dockerfile`, cible `dev` ou `prod` | aucun (réseau interne) | `stats-data:/app/var/data` ; code en dev |
+| `nginx` | `nginxinc/nginx-unprivileged:1.30.4-alpine` + templates et snippets | `8080:8080` | `docker/nginx/templates` et `docker/nginx/snippets` en lecture seule ; système de fichiers en lecture seule, tmpfs `/tmp` et `/etc/nginx/conf.d` (templates rendus) |
+| `php` | `Dockerfile`, cible `prod` (`compose.yaml`) ou `dev` (`compose.override.yaml`) | aucun (réseau interne) | prod : `stats-data:/app/var/data`, tmpfs `/tmp`, `var/share`, `var/log` ; dev : code monté, `php-var:/app/var`, `stats-data-dev:/app/var/data` |
+
+- **Deux fichiers** : `compose.yaml` décrit la stack de production ; `compose.override.yaml`, chargé automatiquement par `docker compose`, la bascule en développement (cible `dev`, code monté, `var/` isolé de celui de l'hôte car le cache Symfony contient des chemins absolus, données séparées de la prod). La production, CI comprise, se pilote avec `docker compose -f compose.yaml`.
+- **Réseau `app`** à sous-réseau fixe `172.30.0.0/24`, conteneurs dans `ip_range 172.30.0.128/25`, passerelle `172.30.0.1` hors de cette plage (§7.4).
+- **`depends_on: php` avec `restart: true`** : Nginx résout `php` à son démarrage ; il redémarre quand `php` est recréé, sinon il garderait l'ancienne adresse et répondrait 502.
+- **`restart: unless-stopped`** sur les deux services (D16) : un conteneur en échec, au démarrage comme en cours de route, est relancé par Docker avec un délai croissant. `up --wait` est toujours accompagné de `--wait-timeout 60`, pour qu'un conteneur qui boucle fasse quand même échouer la commande.
+- **`APP_SECRET`** vide par défaut (`${APP_SECRET:-}`), injecté par l'environnement en production.
 
 ### 7.8 Variables d'environnement
 
@@ -962,7 +976,7 @@ Le quota n'est **pas dupliqué** dans Symfony : le composant RateLimiter nécess
 | Déni de service applicatif | bornes `limit` et chaînes (réponse ≤ 6,03 Mo) ; 413/414 avant PHP ; rate limiting par IP et global ; timeouts FPM et Nginx |
 | Saturation du stockage | fenêtre glissante (nombre de lignes borné) ; budget disque et surveillance (§6.5) |
 | Contournement des protections | PHP-FPM jamais exposé ; `real_ip` limité aux proxys de confiance |
-| Fuite de données | stats publiques documentées (§4.2) ; paramètres absents des logs d'accès et applicatifs ; **exception documentée** pour le log d'erreur Nginx lors d'un incident amont (§8.1) ; aucun détail d'erreur en prod (`display_errors=Off`, pas de trace) |
+| Fuite de données | stats publiques documentées (§4.2) ; paramètres absents des logs d'accès et applicatifs ; **exception documentée** pour le log d'erreur Nginx lors d'un incident amont ou d'un rejet 403 / 413 (§8.1) ; aucun détail d'erreur en prod (`display_errors=Off`, pas de trace) |
 | Interprétation du JSON comme HTML | `X-Content-Type-Options: nosniff` ; échappement conservé de `<` `>` `&` `'` `"` |
 | Mise en cache de réponses | `Cache-Control: no-store` sur toutes les réponses, posé par Nginx |
 | Surface d'attaque des conteneurs | utilisateurs non-root ; système de fichiers en lecture seule ; aucun code dans Nginx ; `/healthz` réservé au réseau d'exploitation |
@@ -980,11 +994,11 @@ Le quota n'est **pas dupliqué** dans Symfony : le composant RateLimiter nécess
 | **Disponibilité** | `/healthz` (`ok` ou `degraded`) + `HEALTHCHECK` Docker + `ping.path` FPM (liveness) | — |
 | **Log d'accès Nginx** (JSON, stdout) | chemin **sans query string**, statut (dont 403, 413, 414, 429, 502, 504), durées totale et côté PHP, `request_id` | **absents** (`$uri`) |
 | **Logs applicatifs** (Monolog JSON, stderr, niveau `warning` en prod) | erreurs, appels servis en mode dégradé, `request_id` | **absents** : jamais journalisés |
-| **Log d'erreur Nginx** (stderr, niveau `error`) | rejets de quota : **non journalisés**, car émis au niveau `info` (`limit_req_log_level`), sous le seuil ; ils restent visibles dans le log d'accès. Incidents amont (502, 504, connexion FastCGI) : journalisés | **présents lors d'un incident amont** : Nginx ajoute la ligne de requête complète, query string comprise, à ses messages d'erreur **[source]** |
+| **Log d'erreur Nginx** (stderr, niveau `error`) | rejets de quota : **non journalisés**, car émis au niveau `info` (`limit_req_log_level`), sous le seuil ; ils restent visibles dans le log d'accès. Rejets 403 (`/healthz`) et 413 : journalisés au niveau `error` (constaté le 2026-09-13 sur Nginx 1.30.4 **[hypothèse]**, vérifié par le smoke de l'étape 9). Incidents amont (502, 504, connexion FastCGI) : journalisés | **présents lors d'un incident amont ou d'un rejet 403 / 413** : Nginx ajoute la ligne de requête complète, query string comprise, à ses messages d'erreur **[source]** |
 
 **Politique retenue et compromis** :
-- **Promesse** : les paramètres sont **absents des logs d'accès et applicatifs**, en toutes circonstances. Ils peuvent apparaître dans le **log d'erreur Nginx lors d'un incident amont**.
-- **Pourquoi ne pas les masquer aussi là** : Nginx ne sait pas retirer la query string de ce contexte d'erreur. La seule option serait de monter le seuil du log d'erreur (`crit`), ce qui supprimerait le diagnostic des 502 et 504, précisément quand il est nécessaire.
+- **Promesse** : les paramètres sont **absents des logs d'accès et applicatifs**, en toutes circonstances. Ils peuvent apparaître dans le **log d'erreur Nginx lors d'un incident amont ou d'un rejet 403 / 413**.
+- **Pourquoi ne pas les masquer aussi là** : Nginx ne sait pas retirer la query string de ce contexte d'erreur. La seule option serait de monter le seuil du log d'erreur (`crit`), ce qui supprimerait le diagnostic des 502 et 504, précisément quand il est nécessaire. Pour les rejets 403 et 413, un `error_log` de niveau `crit` dans la location concernée masquerait aussi les 502 et 504 de cette location : l'exception est donc élargie à ces rejets plutôt que masquée (Q15, 2026-09-13).
 - **Mesures compensatoires** **[hypothèse d'exploitation]** : accès restreint au flux d'erreur Nginx, rétention courte, et rappel aux clients de ne jamais transmettre de données sensibles (§4.2).
 
 **Corrélation** : Nginx génère `$request_id`, le transmet à PHP (`X-Request-Id`), et `RequestIdProcessor` l'ajoute à chaque log applicatif ; il est aussi renvoyé au client dans l'en-tête `X-Request-Id`.
@@ -1019,7 +1033,7 @@ Les tests ci-dessous sont **à écrire** lors de l'implémentation ; aucun n'est
 | **Concurrence** | SQLite, plusieurs processus | fichier partagé | plusieurs processus PHP enregistrent en parallèle : aucune perte, aucun doublon ; somme des hits = min(appels confirmés, N) ; lecture concurrente cohérente |
 | **Fonctionnel** | les 3 endpoints | `WebTestCase` + SQLite de test | **matrice complète du §3.3** (code et message attendus), dont absent, vide, `"0"`, espace et chaîne normale (R01), saut de ligne final et interne, retour chariot, tabulation, NUL (R02) ; pire cas `limit = 10 000` en moins de 6,1 Mo ; emoji renvoyé non échappé ; **HEAD** sur les 3 endpoints, sans corps ni comptage ; 400 non comptés ; ordre des paramètres ; stats vides et après N appels, avec `window` et départage ; 404/405/503 en problem+json ; `X-Request-Id` dans les logs ; stockage indisponible → `/v1/fizzbuzz` 200, `/v1/stats` 503, `/healthz` 200 `degraded` ; **erreur après commit** (exception injectée pendant l'encodage) → 500 **et** appel compté (R12) |
 | **Contrat OpenAPI** | exemples et règles de validation | Redocly + tests fonctionnels | les chaînes valides et invalides du §3.3 donnent le même verdict côté PHP et côté schéma OpenAPI (R02) |
-| **Smoke** | stack Docker complète via Nginx | `docker compose up --wait` + `curl` | `/healthz` 200 en local ; **403 JSON** avec `X-Forwarded-For` d'une IP publique ; appel fizzbuzz 200 ; **3 requêtes acceptées puis 429 JSON** avec `Retry-After` ; deux IP simulées ont chacune leur quota ; un 429 n'est pas compté ; `/healthz` hors quota ; 413 en JSON ; **414 en JSON avec une vraie URL dépassant 8 Ko, et non 500 ni HTML** (R07) ; **`Cache-Control: no-store` et `X-Request-Id`** sur un 200, un 400, un 413, un 414, un 429, un 502 et sur `HEAD` (R11) ; **marqueurs de test** dans `str1` et `str2` absents du log d'accès et du log d'erreur après succès et après 429, et présence dans le log d'erreur après un 502 conforme à la politique du §8.1 (R08) |
+| **Smoke** | stack Docker complète via Nginx | `docker compose -f compose.yaml up -d --wait --wait-timeout 60` (image `prod`, sans la surcharge dev) + `curl` | `/healthz` 200 en local ; **403 JSON** avec `X-Forwarded-For` d'une IP publique ; appel fizzbuzz 200 ; **3 requêtes acceptées puis 429 JSON** avec `Retry-After` ; deux IP simulées ont chacune leur quota ; un 429 n'est pas compté ; `/healthz` hors quota ; 413 en JSON ; **414 en JSON avec une vraie URL dépassant 8 Ko, et non 500 ni HTML** (R07) ; **`Cache-Control: no-store` et `X-Request-Id`** sur un 200, un 400, un 413, un 414, un 429, un 502 et sur `HEAD` (R11) ; **marqueurs de test** dans `str1` et `str2` absents du log d'accès et du log d'erreur après succès et après 429, et présence dans le log d'erreur après un 502 ou un 413, conforme à la politique du §8.1 (R08) |
 | **Démarrage** | conteneur PHP | volume inaccessible | volume en lecture seule ou droits incorrects → le conteneur s'arrête avec un code d'erreur, PHP-FPM ne démarre pas (R05) |
 
 Base de test : `DATABASE_URL` défini dans `.env.test`, tables vidées dans `setUp()`, fenêtre réduite (par exemple N = 5) pour observer les évictions.
@@ -1162,7 +1176,7 @@ leboncoin-test/
 ├── var/                                    # ignoré par git
 ├── .dockerignore  .editorconfig  .env  .env.test  .gitignore
 ├── .php-cs-fixer.dist.php  deptrac.yaml  phpstan.dist.neon  phpunit.dist.xml  redocly.yaml
-├── compose.yaml  Dockerfile  Makefile
+├── compose.yaml  compose.override.yaml  Dockerfile  Makefile
 ├── composer.json  composer.lock  symfony.lock
 ├── CLAUDE.md  AGENTS.md                    # consignes des agents ; AGENTS.md (autres agents) renvoie à CLAUDE.md
 └── README.md
@@ -1178,7 +1192,7 @@ leboncoin-test/
 |---|---|
 | `help` | liste des cibles (par défaut) |
 | `install` | `composer install` |
-| `start` / `stop` | `docker compose up -d --wait` / `down` (le volume de données est conservé) |
+| `start` / `stop` | `docker compose up -d --wait --wait-timeout 60` / `down`, avec la surcharge dev (les volumes de données sont conservés) |
 | `sh` / `logs` | shell PHP / logs des services |
 | `migrate` | migrations explicites |
 | `test` | toute la suite PHPUnit |
@@ -1189,10 +1203,10 @@ leboncoin-test/
 | `lint` | PHP-CS-Fixer (dry-run), PHPStan, **Deptrac**, lint du container, lint YAML, lint OpenAPI |
 | `fix` | PHP-CS-Fixer avec correction |
 | `ci` | `composer validate --strict` + `composer audit` + `lint` + `test` (identique aux jobs `quality`, `tests` et `openapi` de la CI) |
-| `build` | image `prod` |
+| `build` | image `prod` : `docker compose -f compose.yaml build php` |
 | `stats-reset` | vide les deux tables de statistiques, après confirmation interactive |
 
-Les commandes PHP et Composer des cibles tournent **sur l'hôte** par défaut, comme les jobs `quality` et `tests` de la CI (§11.2). La variable `EXEC`, vide par défaut, les fait passer par le conteneur : `make lint EXEC='docker compose exec -T php'`. Le lint OpenAPI (`npx`) tourne toujours sur l'hôte. Les cibles arrivent avec l'étape qui les rend utiles : `start`, `stop`, `sh`, `logs` et `build` à l'étape 3, `migrate` et `stats-reset` à l'étape 7, `smoke` à l'étape 9 et `load-test` à l'étape 9b.
+Les commandes PHP et Composer des cibles tournent **sur l'hôte** par défaut, comme les jobs `quality` et `tests` de la CI (§11.2). La variable `EXEC`, vide par défaut, les fait passer par le conteneur : `make lint EXEC='docker compose exec -T php'`. Le lint OpenAPI (`npx`) tourne toujours sur l'hôte. Les cibles arrivent avec l'étape qui les rend utiles : `start`, `stop`, `sh`, `logs`, `build` et `smoke` à l'étape 3 (smoke complété à l'étape 9), `migrate` et `stats-reset` à l'étape 7, et `load-test` à l'étape 9b. Le `Makefile` exporte `HOST_UID` et `HOST_GID`, repris par l'image dev.
 
 ### 11.2 CI GitHub Actions
 
@@ -1201,7 +1215,7 @@ Les commandes PHP et Composer des cibles tournent **sur l'hôte** par défaut, c
 | `quality` | setup PHP 8.5 → cache Composer → `composer validate --strict` → `composer audit` → PHP-CS-Fixer → PHPStan → **Deptrac** → `lint:container` → `lint:yaml` |
 | `tests` | `composer install` → migrations de test → PHPUnit (unitaires, contrat, intégration, concurrence, fonctionnels) |
 | `openapi` | `npx @redocly/cli@2.52.1 lint` (configuration `redocly.yaml`) |
-| `docker` | build `prod` → `docker compose up --wait` → `tests/Smoke/smoke.sh` |
+| `docker` | build `prod` → `docker compose -f compose.yaml up -d --wait --wait-timeout 60` (sans la surcharge dev) → `tests/Smoke/smoke.sh` |
 | `load-test` *(manuel)* | `workflow_dispatch` : build `prod` → quotas relevés → k6 → seuils bloquants (§9.4) |
 
 ### 11.3 Runbook (contenu du README)
@@ -1216,7 +1230,7 @@ Les commandes PHP et Composer des cibles tournent **sur l'hôte** par défaut, c
 | Surveiller le stockage | taille du volume (alerte à 70 %) et du fichier `-wal` ; un WAL qui ne diminue pas après une sauvegarde signale une lecture restée ouverte |
 | Réinitialiser les statistiques | `make stats-reset` |
 | Sauvegarder la base | `sqlite3 var/data/app.db ".backup …"`, hors pic de trafic ; ne jamais copier le fichier seul pendant une écriture |
-| Consulter le log d'erreur Nginx | accès restreint : il peut contenir les paramètres des requêtes lors d'un incident amont (§8.1) |
+| Consulter le log d'erreur Nginx | accès restreint : il peut contenir les paramètres des requêtes lors d'un incident amont ou d'un rejet 403 / 413 (§8.1) |
 
 ---
 
@@ -1259,7 +1273,7 @@ Une étape = un ou plusieurs commits atomiques (Conventional Commits), avec les 
 | Q12 | Borne haute de `int1` / `int2` | 2 147 483 647 |
 | Q13 | Circuit breaker | non retenu, documenté avec ses seuils (5 échecs, 30 s) en §15.5 |
 | Q14 | SQLite inaccessible au démarrage | échec du démarrage, documenté (D16, §7.6) |
-| Q15 | Paramètres dans le log d'erreur Nginx | rejets de quota exclus ; présents lors d'un incident amont, exception documentée avec accès restreint (§8.1) |
+| Q15 | Paramètres dans le log d'erreur Nginx | rejets de quota exclus ; présents lors d'un incident amont ou d'un rejet 403 / 413, exception documentée avec accès restreint (§8.1) ; élargie aux 403 et 413 le 2026-09-13 (étape 3) |
 | Q16 | Réduction de N | appliquée au démarrage par `app:statistics:apply-window`, avant PHP-FPM (§6.6) |
 
 ---
@@ -1398,6 +1412,7 @@ Choix réévaluable si la surveillance montre des épisodes de lenteur d'entrée
 | Jeton d'accès sur `/stats` dès maintenant | nécessite toute une gestion de jetons (génération, stockage, rotation) ; stats publiques assumées (D9), authentification en ouverture (§14.1) |
 | `POST` + body JSON | sémantique inexacte pour une lecture (D3) |
 | Renvoyer 503 quand les stats ne peuvent pas être enregistrées | comptage toujours cohérent, mais la génération (fonction principale) dépendrait d'un stockage secondaire |
+| Masquer les paramètres des rejets 403 et 413 dans le log d'erreur Nginx | un `error_log` de niveau `crit` dans la location concernée masquerait aussi ses 502 et 504 ; exception élargie à ces rejets, avec accès restreint au log d'erreur (Q15, §8.1) |
 | Démarrer PHP-FPM même si les migrations échouent | servirait durablement un service sans statistiques en masquant une erreur de configuration (§7.6) |
 | Réduire N lors du premier enregistrement après redéploiement | stats incohérentes avant ce premier appel, et purge massive supportée par un client sous verrou d'écriture (§6.6) |
 | Écrire les appels en échec dans un fichier local, puis les réconcilier | risque de double comptage si la relecture est interrompue ; ordre de la fenêtre faussé par la relecture tardive ; écritures concurrentes des processus FPM ; un processus de relecture en plus, contraire au traitement synchrone ; même disque que SQLite. Inutile avec une fenêtre qui se corrige d'elle-même |
