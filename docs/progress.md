@@ -10,7 +10,7 @@
 - **Étape en cours** : aucune (étape 4 faite).
 - **Prochaine étape** : 5 — Domain.
 - **Bloquants** : aucun.
-- **Dépôt** : GitHub privé `chlie22/leboncoin-test`, remote `origin` en HTTPS, branche `main` ; montée de Composer en 2.10.3 et preuve de l'étape 4 poussées après `ec154b2` ; vérifier le run CI de ce push en début d'étape 5.
+- **Dépôt** : GitHub privé `chlie22/leboncoin-test`, remote `origin` en HTTPS, branche `main` ; tout est poussé jusqu'à `851a182`.
 - **Dernière mise à jour** : 2026-09-13.
 
 ## Avancement du plan
@@ -23,7 +23,7 @@
 | 1 | Squelette Symfony 8.1, `git init` | ✅ fait | `bin/console about`, `lint:container`, `lint:yaml`, `composer validate --strict` : code 0 (relancés le 2026-09-13) ; commit `8246597` |
 | 2 | Outillage qualité : PHP-CS-Fixer, PHPStan, Deptrac, PHPUnit, Makefile | ✅ fait | 2026-09-13 : `make lint`, `make test` et `make ci` : code 0 ; sondes jetables : 9 violations bloquées, 3 cas autorisés passent, un test en échec fait échouer `make test` ; commit `aac3469` |
 | 3 | Docker : PHP-FPM, Nginx, compose | ✅ fait | 2026-09-13 : `make start` 0 ; `make smoke` 0 en dev et en prod (`make build` 0, `docker compose -f compose.yaml up -d --wait --wait-timeout 60` 0) : 403 JSON sur `/healthz`, 413, 414 JSON avec une URL de 9 Ko, 429 ; 30 rafales de 5 : 3 acceptées à chaque fois ; conteneurs `read_only` et `unless-stopped` ; PHP en échec au démarrage : `up --wait` code 1 ; `make ci` 0 sur l'hôte et avec `EXEC='docker compose exec -T php'` ; commit `9045d1d` |
-| 4 | CI GitHub Actions | ✅ fait | 2026-09-13 : run `34777100094` vert sur `ec154b2` (`gh run watch --exit-status` 0), jobs `quality`, `tests`, `openapi`, `docker` ; logs lus : audit « No security vulnerability advisories found », PHPStan « No errors », smoke « tout est vert » avec les deux 403 ; Deptrac muet en CI, sonde locale `GITHUB_ACTIONS=true` : propre 0, violation 1 avec `::error` ; `actionlint` 1.7.12 0 et `make ci` 0 en local ; Composer 2.10.3 : `make smoke` 0 en dev et en prod, `make ci` 0, `actionlint` 0 |
+| 4 | CI GitHub Actions | ✅ fait | 2026-09-13 : run `34777100094` vert sur `ec154b2` (`gh run watch --exit-status` 0), jobs `quality`, `tests`, `openapi`, `docker` ; logs lus : audit « No security vulnerability advisories found », PHPStan « No errors », smoke « tout est vert » avec les deux 403 ; Deptrac muet en CI, sonde locale `GITHUB_ACTIONS=true` : propre 0, violation 1 avec `::error` ; `actionlint` 1.7.12 0 et `make ci` 0 en local ; Composer 2.10.3 : `make smoke` 0 en dev et en prod, `make ci` 0, `actionlint` 0 ; run `34778415005` vert sur `851a182` (`composer:2.10.3` au build, audit, PHPStan et smoke lus, plus d'avertissement Composer de `setup-php`) |
 | 5 | Domain : `FizzBuzzParameters`, `FizzBuzzGenerator` | ⏳ à faire | — |
 | 6 | Application : port, cas d'usage, mode dégradé, adaptateur en mémoire | ⏳ à faire | — |
 | 7 | Persistance SQLite, pragmas, commande `apply-window` | ⏳ à faire | — |
