@@ -25,5 +25,5 @@ Reference: `docs/conception.md` §7 and §8.1. Validate a change with the smoke 
 - In dev, `www-data` takes the host UID and GID (build args `HOST_UID`/`HOST_GID`, exported by the `Makefile`) so the bind mount stays writable on Linux.
 - Entrypoint, stopping at the first error: migrations, then `bin/console app:statistics:apply-window`, then `exec php-fpm` (the first two arrive at step 7). An unreachable SQLite at startup must fail the container.
 - `var/data` is created and owned by `www-data` in the image, so the named volume inherits the right owner. Containers run as non-root users. The prod image excludes `docker/`: Nginx holds its own configuration.
-- Image tags are pinned (`php:8.5.10-fpm`, `nginxinc/nginx-unprivileged:1.30.4-alpine`, `composer:2.9.5`): bump them on purpose and rerun `make smoke` on the dev and prod stacks.
+- Image tags are pinned (`php:8.5.10-fpm`, `nginxinc/nginx-unprivileged:1.30.4-alpine`, `composer:2.10.3`, also `tools: composer:2.10.3` in `.github/workflows/ci.yaml`): bump them on purpose and rerun `make smoke` on the dev and prod stacks.
 - Never add `zend_extension=opcache.so`: OPcache is built into PHP 8.5.

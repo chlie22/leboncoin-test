@@ -2,7 +2,7 @@
 
 # Image PHP multi-stage (docs/conception.md §7.6).
 
-FROM composer:2.9.5 AS composer
+FROM composer:2.10.3 AS composer
 
 FROM php:8.5.10-fpm AS base
 WORKDIR /app

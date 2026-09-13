@@ -41,7 +41,7 @@ jobs:
         with:
           php-version: ${{ env.PHP_VERSION }}
           coverage: none
-          tools: composer:2.9.5
+          tools: composer:2.10.3
 
       - name: Répertoire du cache Composer
         id: composer-cache
@@ -95,7 +95,7 @@ jobs:
         with:
           php-version: ${{ env.PHP_VERSION }}
           coverage: none
-          tools: composer:2.9.5
+          tools: composer:2.10.3
 
       - name: Répertoire du cache Composer
         id: composer-cache

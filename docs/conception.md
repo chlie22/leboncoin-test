@@ -758,7 +758,7 @@ Client ──► [ nginx ] ── quotas, bornes, erreurs JSON ──► [ php (
 - **Deux conteneurs**, un processus chacun.
 - **PHP-FPM n'est jamais exposé** : sinon le rate limiting et les bornes Nginx seraient contournables.
 - Nginx ne contient aucun code : tout est transmis à `public/index.php`.
-- Images, tags figés : `nginxinc/nginx-unprivileged:1.30.4-alpine` (non-root), `php:8.5.10-fpm`, et `composer:2.9.5` pour la construction. Une montée de version est volontaire et repasse `make smoke` sur les stacks dev et prod.
+- Images, tags figés : `nginxinc/nginx-unprivileged:1.30.4-alpine` (non-root), `php:8.5.10-fpm`, et `composer:2.10.3` pour la construction (même version dans la CI ; 2.9.5 abandonné le 2026-09-13 pour l'avis GHSA-f9f8-rm49-7jv2, corrigé en 2.9.8 **[source]** GitHub Advisory Database). Une montée de version est volontaire et repasse `make smoke` sur les stacks dev et prod.
 
 ### 7.3 Configuration Nginx
 
@@ -925,7 +925,7 @@ Le quota n'est **pas dupliqué** dans Symfony : le composant RateLimiter nécess
 | Étape | Contenu |
 |---|---|
 | `base` | `php:8.5.10-fpm`, `conf.d`, pool FPM, entrypoint |
-| `dev` | Xdebug 3.5.3 (désactivé par défaut, `XDEBUG_MODE=off`), Composer 2.9.5, code en bind mount ; `www-data` reprend l'UID et le GID de l'hôte (arguments `HOST_UID`, `HOST_GID`) pour que le code monté reste inscriptible sous Linux comme sous macOS |
+| `dev` | Xdebug 3.5.3 (désactivé par défaut, `XDEBUG_MODE=off`), Composer 2.10.3, code en bind mount ; `www-data` reprend l'UID et le GID de l'hôte (arguments `HOST_UID`, `HOST_GID`) pour que le code monté reste inscriptible sous Linux comme sous macOS |
 | `build` | `composer install --no-dev --classmap-authoritative`, `composer dump-env prod`, `cache:warmup` (génère le fichier de preload) |
 | `prod` | application copiée depuis `build` (code à `root`, `var/` à `www-data`), `app.prod.ini`, `var/data` créé et attribué à `www-data`, exécution en `www-data`, système de fichiers en lecture seule sauf `var/` : `var/data` est le volume ; `var/share` (pool `cache.app`), `var/log` et `/tmp` sont des tmpfs attribués à `www-data` (un tmpfs est créé au nom de `root`) ; `var/cache/prod`, préchauffé dans l'image, reste en lecture seule |
 
@@ -1212,7 +1212,7 @@ Les commandes PHP et Composer des cibles tournent **sur l'hôte** par défaut, c
 
 | Job | Étapes |
 |---|---|
-| `quality` | setup PHP 8.5 et Composer 2.9.5 → cache Composer → `composer validate --strict` → `composer install` → `composer audit` → PHP-CS-Fixer → `cache:warmup --env=dev` → `lint:container` → `lint:yaml` → PHPStan → **Deptrac** |
+| `quality` | setup PHP 8.5 et Composer 2.10.3 → cache Composer → `composer validate --strict` → `composer install` → `composer audit` → PHP-CS-Fixer → `cache:warmup --env=dev` → `lint:container` → `lint:yaml` → PHPStan → **Deptrac** |
 | `tests` | setup PHP 8.5 → cache Composer → `composer install` → migrations de test (à partir de l'étape 7) → PHPUnit (unitaires, contrat, intégration, concurrence, fonctionnels) |
 | `openapi` | Node 24 → `npx --yes @redocly/cli@2.52.1 lint` (configuration `redocly.yaml`) |
 | `docker` | `docker compose -f compose.yaml build php` → `docker compose -f compose.yaml up -d --wait --wait-timeout 60` (sans la surcharge dev) → `tests/Smoke/smoke.sh` → en cas d'échec, `ps -a` et logs de la stack |
@@ -1222,7 +1222,7 @@ Fichier `.github/workflows/ci.yaml` (étape 4) :
 
 - **Déclencheurs** : `push` sur `main`, `pull_request`, `workflow_dispatch`, sans filtre de chemins (`docs/openapi.yaml` est sous `docs/`). Un nouveau run sur la même référence annule le précédent (`concurrency`). Le futur job `load-test` aura son propre groupe, pour ne pas annuler un run de push ni être annulé par lui.
 - **Jobs en parallèle**, sur `ubuntu-24.04`, chacun avec un `timeout-minutes` (10, 10, 5 et 15) : le dépôt est privé, les minutes sont décomptées. Permissions réduites à `contents: read`.
-- **Ordre du job `quality`** : celui de la cible `lint` du `Makefile`. `cache:warmup --env=dev` précède PHPStan, qui lit le container XML. `composer audit` suit `composer install` : sans `vendor/`, il affiche « No packages - skipping audit. » et réussit sans rien vérifier **[source]** (Composer 2.9.5, essai du 2026-09-13 sur une copie de `composer.json` et `composer.lock`).
+- **Ordre du job `quality`** : celui de la cible `lint` du `Makefile`. `cache:warmup --env=dev` précède PHPStan, qui lit le container XML. `composer audit` suit `composer install` : il audite les paquets installés. Sans `vendor/`, Composer 2.9.5 affiche « No packages - skipping audit. » et réussit sans rien vérifier ; Composer 2.10.3 refuse (« No installed packages found », code 1) **[source]** (essais du 2026-09-13 sur une copie de `composer.json` et `composer.lock`).
 - **Actions épinglées par SHA de commit**, le tag en commentaire **[source]** (GitHub, relevé le 2026-09-13) : `actions/checkout` v7.0.1, `shivammathur/setup-php` 2.37.2, `actions/setup-node` v7.0.0, `actions/cache` v6.1.0. Mise à jour volontaire, comme les tags des images.
 - **Commandes dupliquées** : les jobs reprennent les commandes des cibles `ci`, `lint` et `test` sans appeler `make`, car `lint` inclut le lint OpenAPI, qui demande Node. Un commentaire dans les deux fichiers rappelle de les modifier ensemble.
 - **Lint du workflow** : `docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.12 -color`, en local et hors CI.
