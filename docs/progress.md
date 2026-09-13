@@ -7,10 +7,10 @@
 ## Où on en est
 
 - **Phase** : implémentation.
-- **Étape en cours** : aucune (étape 6 faite, pas encore committée).
+- **Étape en cours** : aucune (étape 6 faite).
 - **Prochaine étape** : 7 — Persistance SQLite.
 - **Bloquants** : aucun.
-- **Dépôt** : GitHub privé `chlie22/leboncoin-test`, remote `origin` en HTTPS, branche `main` ; étape 5 poussée en `a99355a`, étape 6 dans l'arbre de travail.
+- **Dépôt** : GitHub privé `chlie22/leboncoin-test`, remote `origin` en HTTPS, branche `main` ; tout est poussé, étape 6 en `9f6a2da`.
 - **Dernière mise à jour** : 2026-09-13.
 
 ## Avancement du plan
@@ -25,7 +25,7 @@
 | 3 | Docker : PHP-FPM, Nginx, compose | ✅ fait | 2026-09-13 : `make start` 0 ; `make smoke` 0 en dev et en prod (`make build` 0, `docker compose -f compose.yaml up -d --wait --wait-timeout 60` 0) : 403 JSON sur `/healthz`, 413, 414 JSON avec une URL de 9 Ko, 429 ; 30 rafales de 5 : 3 acceptées à chaque fois ; conteneurs `read_only` et `unless-stopped` ; PHP en échec au démarrage : `up --wait` code 1 ; `make ci` 0 sur l'hôte et avec `EXEC='docker compose exec -T php'` ; commit `9045d1d` |
 | 4 | CI GitHub Actions | ✅ fait | 2026-09-13 : run `34777100094` vert sur `ec154b2` (`gh run watch --exit-status` 0), jobs `quality`, `tests`, `openapi`, `docker` ; logs lus : audit « No security vulnerability advisories found », PHPStan « No errors », smoke « tout est vert » avec les deux 403 ; Deptrac muet en CI, sonde locale `GITHUB_ACTIONS=true` : propre 0, violation 1 avec `::error` ; `actionlint` 1.7.12 0 et `make ci` 0 en local ; Composer 2.10.3 : `make smoke` 0 en dev et en prod, `make ci` 0, `actionlint` 0 ; run `34778415005` vert sur `851a182` (`composer:2.10.3` au build, audit, PHPStan et smoke lus, plus d'avertissement Composer de `setup-php`) |
 | 5 | Domain : `FizzBuzzParameters`, `FizzBuzzGenerator` | ✅ fait | 2026-09-13 : TDD rouge puis vert (`FizzBuzzParametersTest` 10 tests, `FizzBuzzGeneratorTest` 13 : code 2 puis 0) ; sondes `'' !== $term` et `$term ?:` : code 1 sur les cas attendus ; `make ci` 0 relancé hors agent (23 tests, 38 assertions, PHPStan « No errors », Deptrac 0 violation, `lint:container` OK) ; aucun `Symfony` dans `src/FizzBuzz/Domain` ni `tests/Unit/FizzBuzz/Domain` ; revues plan (sound), architecture et `/code-review` sans point bloquant ; commit `a99355a`, run `34780267928` vert (4 jobs, PHPUnit « OK (23 tests, 38 assertions) » lu) |
-| 6 | Application : port, cas d'usage, mode dégradé, adaptateur en mémoire | ✅ fait | 2026-09-13 : TDD rouge puis vert (`InMemoryRequestStatisticsStoreTest` 24 tests dont 20 du contrat, `GenerateFizzBuzzTest` 7, `GetMostFrequentRequestTest` 4 : code 2 puis 0) ; 8 sondes de mutation (départage, retour d'une combinaison, `==` lâche, éviction avant incrément, double `record()`, nouvelle tentative, paramètres journalisés, `catch (\Throwable)`) : code 1 ; `make fix` 0 et `make ci` 0 relancés hors agent (58 tests, 325 assertions, PHPStan « No errors », Deptrac 0 violation et 0 non couvert, `lint:container` OK) ; revues plan (1 bloquant corrigé), architecture (3 points non bloquants intégrés) et `/code-review` sans point ; commit à faire |
+| 6 | Application : port, cas d'usage, mode dégradé, adaptateur en mémoire | ✅ fait | 2026-09-13 : TDD rouge puis vert (`InMemoryRequestStatisticsStoreTest` 24 tests dont 20 du contrat, `GenerateFizzBuzzTest` 7, `GetMostFrequentRequestTest` 4 : code 2 puis 0) ; 8 sondes de mutation (départage, retour d'une combinaison, `==` lâche, éviction avant incrément, double `record()`, nouvelle tentative, paramètres journalisés, `catch (\Throwable)`) : code 1 ; `make fix` 0 et `make ci` 0 relancés hors agent (58 tests, 325 assertions, PHPStan « No errors », Deptrac 0 violation et 0 non couvert, `lint:container` OK) ; revues plan (1 bloquant corrigé), architecture (3 points non bloquants intégrés) et `/code-review` sans point ; commit `9f6a2da`, run `34782724339` vert (4 jobs, PHPUnit « OK (58 tests, 325 assertions) », PHPStan, audit et smoke lus) |
 | 7 | Persistance SQLite, pragmas, commande `apply-window` | ⏳ à faire | — |
 | 8 | API : DTO, contrôleurs, `HEAD`, erreurs | ⏳ à faire | — |
 | 9 | `/healthz`, logs corrélés, OPcache, smoke test | ⏳ à faire | — |
