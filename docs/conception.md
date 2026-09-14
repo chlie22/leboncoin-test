@@ -734,7 +734,7 @@ LIMIT 1;
 | Pas de statistique historique exacte au-delà de N | §15.1 (historique complet), §15.2 (Space-Saving) |
 | Volume physique dépendant de la longueur des chaînes | budget et surveillance (§6.5) |
 | Mesures réalisées sur machine de développement, un seul processus | qualification sur l'infrastructure cible, test de charge (§9.4, §14.3) |
-| Copier seul le fichier principal pendant une écriture ne constitue pas une sauvegarde | Litestream ou `.backup` (§14.2) |
+| Copier seul le fichier principal pendant une écriture ne constitue pas une sauvegarde | Litestream ou `VACUUM INTO` (§11.3, §14.2) |
 
 ---
 
@@ -1264,7 +1264,7 @@ Fichier `.github/workflows/ci.yaml` (étape 4) :
 | Modifier N ou les quotas | changer la variable d'environnement puis redéployer. Une réduction de N est appliquée **au démarrage**, avant l'arrivée du trafic (§6.6) |
 | Surveiller le stockage | taille du volume (alerte à 70 %) et du fichier `-wal` ; un WAL qui ne diminue pas après une sauvegarde signale une lecture restée ouverte |
 | Réinitialiser les statistiques | `make stats-reset` |
-| Sauvegarder la base | `sqlite3 var/data/app.db ".backup …"`, hors pic de trafic ; ne jamais copier le fichier seul pendant une écriture |
+| Sauvegarder la base | `VACUUM INTO` depuis le conteneur PHP (pas de CLI `sqlite3` dans l'image, §7.9 : minimiser la surface) : `docker compose exec php php -r '(new PDO("sqlite:/app/var/data/app.db"))->exec("VACUUM INTO \"/app/var/data/backup.db\"");'`, hors pic de trafic ; ne jamais copier le fichier seul pendant une écriture |
 | Consulter le log d'erreur Nginx | accès restreint : il peut contenir les paramètres des requêtes lors d'un incident amont ou d'un rejet 403 / 413 (§8.1) |
 
 ---

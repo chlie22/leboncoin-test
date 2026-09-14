@@ -2,7 +2,85 @@
 
 Test technique leboncoin : API REST FizzBuzz avec statistiques (PHP 8.5, Symfony 8.1, SQLite, Nginx + PHP-FPM, Docker).
 
-> Le runbook complet (démarrage, diagnostics, quotas, sauvegarde) arrive à l’étape 10. Ci-dessous : livrable du test de charge (§9.4).
+Spécification technique : [`docs/conception.md`](docs/conception.md). Contrat d'API (fait foi) : [`docs/openapi.yaml`](docs/openapi.yaml). Avancement : [`docs/progress.md`](docs/progress.md).
+
+## Lancement
+
+**Prérequis** : Docker Compose ; pour la stack **dev**, `vendor/` déjà présent sur l'hôte (`make install` / `composer install`) — `make start` ne reconstruit pas l'image et monte le code.
+
+```bash
+make install   # une fois, sur l'hôte
+make start     # docker compose up -d --wait (cible dev via compose.override.yaml)
+make stop      # docker compose down ; les volumes de données sont conservés
+```
+
+- Stack **dev** (défaut) : `make start` — code monté, image cible `dev`.
+- Stack **prod** : `make build`, puis `docker compose -f compose.yaml up -d --wait --wait-timeout 60`.
+- Vérifications locales : `make ci` (hôte, comme la CI). Smoke et charge exigent la prod : `make smoke`, `make load-test`.
+- Liste des cibles : `make help`.
+
+## Contrat d'API (résumé)
+
+Référence : [`docs/openapi.yaml`](docs/openapi.yaml). En cas d'écart, le contrat prime.
+
+| Endpoint | Rôle |
+|---|---|
+| `GET /v1/fizzbuzz` | Suite FizzBuzz paramétrable (`int1`, `int2`, `limit`, `str1`, `str2`) ; chaque appel réussi est comptabilisé |
+| `GET /v1/stats` | Combinaison la plus fréquente **dans la fenêtre glissante** des N derniers appels (`hits`, `window`) |
+| `GET /healthz` | Sonde : `ok` ou `degraded` ; réservée au réseau d'exploitation (403 depuis l'extérieur) |
+
+`HEAD` est supporté sur les trois chemins. Erreurs de paramètres : **400** avec la liste des violations (`application/problem+json`). Corrélation : en-tête `X-Request-Id` sur chaque réponse.
+
+**`/v1/stats` est public** (choix documenté) : ne jamais y faire passer de données sensibles via `str1` / `str2`.
+
+## Décisions clés
+
+Détail et décisions validées : [`docs/conception.md`](docs/conception.md) §2 et §13.
+
+- **Architecture** : DDD + hexagonale + SOLID, dépendances vérifiées par Deptrac (D7).
+- **Persistance** : Doctrine DBAL + Migrations, **sans ORM** ; SQLite sur volume (D2, D11).
+- **Statistiques** : fenêtre glissante des **N** derniers appels (`STATS_WINDOW_SIZE`, défaut 100 000), pas l'historique complet (D8).
+- **Mode dégradé** : une fois démarré, un échec d'enregistrement des stats n'empêche pas de servir la génération ; au démarrage, SQLite inaccessible fait échouer le conteneur (D15, D16).
+- **Rate limiting** : côté Nginx, avant PHP — 1 req/s par IP (rafale 3) et 10 req/s au global (D10).
+- **Entrées HTTP** : `#[MapQueryString]` + DTO + Validator ; erreurs RFC 9457 (D12, D13).
+- **Observabilité** : logs JSON corrélés + `/healthz` ; paramètres absents des logs d'accès et applicatifs (D6, §8.1).
+
+## Limites connues
+
+Voir aussi [`docs/conception.md`](docs/conception.md) §6.8, §9.4, §16.
+
+- **Une seule instance** : un seul écrivain SQLite à la fois.
+- **Pas d'historique exact au-delà de N** ; le volume disque dépend de la longueur des chaînes (budget volume 500 Mo, alerte à 70 %).
+- **Mesures** (benchmarks, charge) réalisées sur machine de développement ; mémoire totale d'une requête Symfony / PHP-FPM non mesurée (§1.2).
+- **Sauvegarde** : copier seul le fichier principal pendant une écriture n'est pas une sauvegarde (§6.8).
+- **Test de charge** : scénario nominal + scénarios complémentaires (§9.4 / section ci-dessous) — pas une campagne de capacité jusqu'à rupture, ni multi-instance (§14.3).
+- **Hors périmètre** : TLS (terminé en amont), CORS, Swagger UI (§16).
+
+## Ouvertures
+
+Pour un service critique ou à fort trafic ([`docs/conception.md`](docs/conception.md) §14) :
+
+- **Sécurité** : authentification (clé d'API ou OAuth2), quotas par client, rate limiting multi-instance, scan d'images.
+- **Fiabilité** : supervision externe de `/healthz`, métriques Prometheus, traçage OpenTelemetry, Litestream, déploiement orchestré.
+- **Performance** : campagne de capacité sur l'infra cible, FrankenPHP worker, streaming JSON.
+- **Scalabilité** : stockage client-serveur (nouvel adaptateur du port), historique en complément, *outbox* pour un comptage exact pendant les pannes.
+- **Qualité** : validation OpenAPI automatisée, tests de mutation, collection Postman.
+
+## Runbook
+
+Procédures d'exploitation ([`docs/conception.md`](docs/conception.md) §11.3). Les cibles `make` sont listées par `make help`.
+
+| Opération | Procédure |
+|---|---|
+| Démarrer, arrêter | `make start` / `make stop` (dev). Prod : `docker compose -f compose.yaml up -d --wait --wait-timeout 60` / `docker compose -f compose.yaml down`. |
+| Diagnostiquer une requête | Récupérer `X-Request-Id` (réponse client), puis filtrer les logs Nginx et PHP : `make logs` (ou `docker compose logs`) et rechercher cette valeur. |
+| Le conteneur PHP ne démarre pas | Lire la sortie de l'entrypoint : migration ou `app:statistics:apply-window` en échec ; vérifier le montage du volume, les droits (`www-data`) et `STATS_WINDOW_SIZE` (entier décimal ≥ 1). Pour diagnostiquer sans lancer FPM : `docker compose -f compose.yaml run --rm php php bin/console …`. Tant que ce n'est pas corrigé, la génération n'est pas servie (D16). |
+| Service en `degraded` | `GET /healthz` → `status: degraded`. Lire les `warning` `statistics.record_skipped` ; vérifier l'espace disque et les droits du volume. La génération reste servie pendant l'intervention. |
+| Modifier N ou les quotas | Changer `STATS_WINDOW_SIZE` (`.env` / Compose) ou `RATE_LIMIT_*` (`compose.yaml`), puis redéployer. Une réduction de N est appliquée **au démarrage**, avant le trafic (§6.6). |
+| Surveiller le stockage | Taille du volume (alerte à 70 %) et du fichier `-wal` sous `var/data/` (dans le conteneur : `/app/var/data/`). Un WAL qui ne diminue pas après une sauvegarde signale une lecture restée ouverte. |
+| Réinitialiser les statistiques | `make stats-reset` (confirmation interactive `y`). Prod : `EXEC='docker compose -f compose.yaml exec -T php' make stats-reset`. |
+| Sauvegarder la base | Pas de CLI `sqlite3` dans l'image (minimalisme, §7.9) : `VACUUM INTO` via PDO, depuis le conteneur PHP déjà présent. `docker compose -f compose.yaml exec php php -r '(new PDO("sqlite:/app/var/data/app.db"))->exec("VACUUM INTO \"/app/var/data/backup.db\"");'` **hors pic de trafic** ; ne jamais copier le fichier seul pendant une écriture. |
+| Consulter le log d'erreur Nginx | Accès restreint : il peut contenir les paramètres des requêtes lors d'un incident amont (502/504) ou d'un rejet 403 / 413 (§8.1). Les 429 n'y apparaissent pas (`limit_req_log_level info`). |
 
 ## Test de charge (k6)
 
