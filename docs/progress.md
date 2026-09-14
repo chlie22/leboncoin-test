@@ -10,7 +10,7 @@
 - **Étape en cours** : aucune — les 11 étapes du plan sont faites.
 - **Prochaine étape** : aucune.
 - **Bloquants** : aucun.
-- **Dépôt** : GitHub privé `chlie22/leboncoin-test`, remote `origin` en HTTPS, branche `main` ; étape 10 poussée (`27c4f47`).
+- **Dépôt** : GitHub privé `chlie22/leboncoin-test`, remote `origin` en HTTPS, branche `main` ; post-livraison poussé (`b410546`).
 - **Dernière mise à jour** : 2026-09-14.
 
 ## Avancement du plan
@@ -27,6 +27,7 @@
 | 9 | `/healthz`, logs, OPcache, smoke | ✅ fait | `fe59cfd`, run `34850124962` |
 | 9b | Test de charge k6 | ✅ fait | `66c6291`, run `34864015335` (job `load-test`, `workflow_dispatch`) |
 | 10 | README et runbook | ✅ fait | `27c4f47`, run `34867738878` |
+| — | Collection Postman (§14.5, post-livraison) | ✅ fait | `b410546`, run `34872463453` |
 
 Statuts : ⏳ à faire · 🚧 en cours · ✅ fait · ⛔ bloqué. Une étape n'est ✅ qu'avec une **preuve** (commande et code de sortie, ou hash du commit).
 
@@ -34,6 +35,7 @@ Statuts : ⏳ à faire · 🚧 en cours · ✅ fait · ⛔ bloqué. Une étape n
 
 Plan §12 terminé et poussé. Rien de prévu à ce stade ; ouvertures possibles en §14 sur demande du développeur.
 
+- `/healthz` renvoie **403 depuis l'hôte** (Postman Desktop compris), par conception : le trafic hôte entre par la passerelle du réseau Compose, hors `TRUSTED_PROXY_CIDR` (§7.3). Pour un vrai `200` : `make postman-healthz` (Newman dans un conteneur attaché au réseau Compose de la stack prod, même principe que le conteneur k6).
 - Sauvegarde SQLite : pas de CLI `sqlite3` dans l'image (minimalisme, §7.9) → `VACUUM INTO` via PDO depuis le conteneur PHP, sans rien ajouter à l'image ; vérifié en direct sur la base de prod (compte de lignes identique).
 - Sorties : `rtk proxy` ; codes : `$?` sans pipe. Push HTTPS.
 
@@ -44,11 +46,12 @@ Plan §12 terminé et poussé. Rien de prévu à ce stade ; ouvertures possibles
 - **2026-09-13–14** — Étapes 5–8 : messages entiers ; DBAL seul ; validator/serializer ; monolog → étape 9.
 - **2026-09-14** — Étape 9 : monolog 4.1.0 ; `RedactQueryStringProcessor` ; smoke prod ; cache DTO au build.
 - **2026-09-14** — Étape 9b : k6 ; load-test ; `chmod 777` dir k6. Étape 10 : README + runbook ; sauvegarde SQLite sans `sqlite3` (`VACUUM INTO` via PDO, image inchangée) plutôt que rouvrir la minimalisation du §7.9.
+- **2026-09-14** — Post-livraison : collection Postman (§14.5) ; `/healthz` corrigé (403 depuis l'hôte, pas 200) ; `make postman-healthz` + `docs/verify-healthz.sh` (Newman sur le réseau Compose prod) pour vérifier le `200` réel.
 
 ## Journal des sessions
 
+- **2026-09-14 (nuit, postman)** — Collection Postman relue : `/healthz` documentait à tort un `200` depuis l'hôte (en réalité 403, vérifié en direct et en CI) ; corrigé + `make postman-healthz`/`docs/verify-healthz.sh` (Newman sur le réseau Compose) pour un vrai `200` ; `make ci` 0. `b410546`, CI `34872463453`.
 - **2026-09-14 (soir, 10 suite)** — `sqlite3` absente de l'image (constaté par l'agent) → `VACUUM INTO` via PDO retenu plutôt qu'ajouter la CLI (surface d'attaque, §7.9) ; corrigé et testé en direct ; `make ci` 0. Étape 10 faite : `27c4f47`, CI `34867738878`. **Plan §12 terminé.**
 - **2026-09-14 (soir, 10)** — README complet (§11.3) + section charge 9b conservée ; `docs/progress.md` à jour. Preuve : relecture. Pas de commit.
 - **2026-09-14 (soir, 9b suite)** — Correctif `chmod 777` k6 ; étape 9b faite : `66c6291`, run `34864015335`.
 - **2026-09-14 (soir, 9b)** — Load-test local nominal OK ; `make ci` 0 ; actionlint 0.
-- **2026-09-14 (soir)** — Étape 9 faite : `fe59cfd`, CI `34850124962`.
