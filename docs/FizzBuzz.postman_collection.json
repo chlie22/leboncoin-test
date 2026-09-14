@@ -1,0 +1,255 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "FizzBuzz API",
+    "description": "Collection dérivée de `docs/openapi.yaml` (contrat qui fait foi).\n\n**Prérequis** : stack démarrée (`make start` en local → http://localhost:8080).\n\n**Rate limiting** : 1 req/s par IP (rafale 3) et 10 req/s au global — espace les appels ou attends `Retry-After` sur un 429.\n\n**/healthz** : réservé au réseau d'exploitation. **Depuis cette collection (hôte → localhost), la réponse attendue est 403**, y compris sans en-tête forgé : le trafic publié depuis l'hôte passe par la passerelle du réseau Compose, hors de `TRUSTED_PROXY_CIDR` (`docs/conception.md` §7.3). Pour obtenir un vrai `200`/`degraded` : `make postman-healthz` (voir la description du dossier **Operations**).\n\n**Stats** : endpoint public — ne jamais envoyer de données sensibles dans `str1` / `str2`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    }
+  ],
+  "item": [
+    {
+      "name": "FizzBuzz",
+      "item": [
+        {
+          "name": "GET /v1/fizzbuzz — exemple de l'énoncé",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/fizzbuzz?int1=3&int2=5&limit=15&str1=fizz&str2=buzz",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "fizzbuzz"],
+              "query": [
+                { "key": "int1", "value": "3" },
+                { "key": "int2", "value": "5" },
+                { "key": "limit", "value": "15" },
+                { "key": "str1", "value": "fizz" },
+                { "key": "str2", "value": "buzz" }
+              ]
+            },
+            "description": "Suite attendue : 1, 2, fizz, 4, buzz, … fizzbuzz. L'appel est comptabilisé dans les stats."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /v1/fizzbuzz — unicode (emoji + accent)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/fizzbuzz?int1=2&int2=3&limit=6&str1=🍕&str2=é",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "fizzbuzz"],
+              "query": [
+                { "key": "int1", "value": "2" },
+                { "key": "int2", "value": "3" },
+                { "key": "limit", "value": "6" },
+                { "key": "str1", "value": "🍕" },
+                { "key": "str2", "value": "é" }
+              ]
+            },
+            "description": "Caractères non-ASCII renvoyés sans échappement JSON (`\\u…`)."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /v1/fizzbuzz — str1=0 et str2=espace",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/fizzbuzz?int1=2&int2=3&limit=6&str1=0&str2=%20",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "fizzbuzz"],
+              "query": [
+                { "key": "int1", "value": "2" },
+                { "key": "int2", "value": "3" },
+                { "key": "limit", "value": "6" },
+                { "key": "str1", "value": "0" },
+                { "key": "str2", "value": " " }
+              ]
+            },
+            "description": "`\"0\"` et une espace sont des chaînes valides (contrairement à une chaîne vide)."
+          },
+          "response": []
+        },
+        {
+          "name": "HEAD /v1/fizzbuzz — valide sans compter",
+          "request": {
+            "method": "HEAD",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/fizzbuzz?int1=3&int2=5&limit=15&str1=fizz&str2=buzz",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "fizzbuzz"],
+              "query": [
+                { "key": "int1", "value": "3" },
+                { "key": "int2", "value": "5" },
+                { "key": "limit", "value": "15" },
+                { "key": "str1", "value": "fizz" },
+                { "key": "str2", "value": "buzz" }
+              ]
+            },
+            "description": "Mêmes règles que GET, sans corps et **sans comptabiliser** l'appel."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /v1/fizzbuzz — 400 paramètre manquant / hors bornes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/fizzbuzz?int1=3&int2=5&limit=0&str2=buzz",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "fizzbuzz"],
+              "query": [
+                { "key": "int1", "value": "3" },
+                { "key": "int2", "value": "5" },
+                { "key": "limit", "value": "0", "description": "invalide (minimum 1)" },
+                { "key": "str1", "value": "", "disabled": true, "description": "absent volontairement" },
+                { "key": "str2", "value": "buzz" }
+              ]
+            },
+            "description": "Attendu : `400` `application/problem+json` avec la liste des `violations` (str1 manquant, limit hors bornes)."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /v1/fizzbuzz — 400 conversion (int1=abc)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/fizzbuzz?int1=abc&int2=5&limit=15&str1=fizz&str2=buzz",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "fizzbuzz"],
+              "query": [
+                { "key": "int1", "value": "abc" },
+                { "key": "int2", "value": "5" },
+                { "key": "limit", "value": "15" },
+                { "key": "str1", "value": "fizz" },
+                { "key": "str2", "value": "buzz" }
+              ]
+            },
+            "description": "Erreur de conversion : seules les violations de conversion sont renvoyées."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /v1/fizzbuzz — 400 chaîne vide",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/fizzbuzz?int1=3&int2=5&limit=15&str1=&str2=buzz",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "fizzbuzz"],
+              "query": [
+                { "key": "int1", "value": "3" },
+                { "key": "int2", "value": "5" },
+                { "key": "limit", "value": "15" },
+                { "key": "str1", "value": "" },
+                { "key": "str2", "value": "buzz" }
+              ]
+            },
+            "description": "Chaîne vide traitée comme paramètre absent (`NotBlank`)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Statistics",
+      "item": [
+        {
+          "name": "GET /v1/stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/stats",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "stats"]
+            },
+            "description": "Combinaison la plus fréquente dans la fenêtre glissante. Fenêtre vide : `request: null`, `hits: 0`."
+          },
+          "response": []
+        },
+        {
+          "name": "HEAD /v1/stats",
+          "request": {
+            "method": "HEAD",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/stats",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "stats"]
+            },
+            "description": "Mêmes statuts et en-têtes que GET, sans corps."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Operations",
+      "description": "Depuis Postman Desktop / `localhost:8080`, `/healthz` renvoie **403 par conception** (voir chaque requête). Pour un vrai `200` : `make postman-healthz` (stack prod requise), qui lance ce dossier avec Newman dans un conteneur attaché au réseau Compose (même principe que le conteneur k6 du test de charge, `docs/conception.md` §9.4) plutôt que depuis l'hôte. Détail : `docs/verify-healthz.sh`.\n\nVérifié le 2026-09-14 : les 3 requêtes renvoient `200` (`postman/newman:6-alpine`). La requête « X-Forwarded-For: 127.0.0.1 forgé » perd son intérêt dans ce mode : la source (le conteneur Newman) est déjà dans le réseau de confiance, donc déjà acceptée sans usurpation.",
+      "item": [
+        {
+          "name": "GET /healthz — depuis l'hôte (403 par conception)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/healthz",
+              "host": ["{{baseUrl}}"],
+              "path": ["healthz"]
+            },
+            "description": "Attendu : `403` `application/problem+json`, même sans en-tête forgé. Le trafic publié depuis l'hôte (Docker Desktop comme Linux) entre par la passerelle du réseau Compose, **hors** de `TRUSTED_PROXY_CIDR` — vérifié en CI (run `34777100094`) et par `tests/Smoke/smoke.sh`. `/healthz` n'est donc **jamais** accessible en `200` via Postman depuis l'hôte : voir la note de la collection pour l'alternative (`docker compose exec php curl http://nginx:8080/healthz`). Hors quota de rate limiting."
+          },
+          "response": []
+        },
+        {
+          "name": "HEAD /healthz",
+          "request": {
+            "method": "HEAD",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/healthz",
+              "host": ["{{baseUrl}}"],
+              "path": ["healthz"]
+            },
+            "description": "Attendu : `403` sans corps, pour la même raison que la requête GET ci-dessus."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /healthz — X-Forwarded-For: 127.0.0.1 forgé",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Forwarded-For",
+                "value": "127.0.0.1",
+                "description": "Tentative d'usurpation de l'adresse de confiance : Nginx n'honore X-Forwarded-For que depuis un client déjà dans TRUSTED_PROXY_CIDR."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/healthz",
+              "host": ["{{baseUrl}}"],
+              "path": ["healthz"]
+            },
+            "description": "Attendu : `403`, comme la requête de base. Démontre qu'un client externe ne peut pas se faire passer pour le réseau d'exploitation en forgeant X-Forwarded-For (`docs/conception.md` §7.3, `tests/Smoke/smoke.sh`)."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

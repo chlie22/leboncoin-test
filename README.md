@@ -21,7 +21,7 @@ make stop      # docker compose down ; les volumes de données sont conservés
 
 ## Contrat d'API (résumé)
 
-Référence : [`docs/openapi.yaml`](docs/openapi.yaml). En cas d'écart, le contrat prime.
+Référence : [`docs/openapi.yaml`](docs/openapi.yaml). En cas d'écart, le contrat prime. Prise en main rapide : [collection Postman](docs/FizzBuzz.postman_collection.json) (import direct, `baseUrl` pointe sur `http://localhost:8080`). `/healthz` y répond **403** depuis l'hôte, par conception (réseau d'exploitation, §7.3) — pour vérifier le `200` : `make postman-healthz` (stack prod requise).
 
 | Endpoint | Rôle |
 |---|---|

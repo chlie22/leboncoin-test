@@ -24,7 +24,7 @@ export HOST_UID := $(shell id -u)
 export HOST_GID := $(shell id -g)
 
 .DEFAULT_GOAL := help
-.PHONY: help start stop sh logs build install migrate stats-reset test-db test test-unit test-integration test-functional smoke load-test lint fix ci benchmarks
+.PHONY: help start stop sh logs build install migrate stats-reset test-db test test-unit test-integration test-functional smoke load-test postman-healthz lint fix ci benchmarks
 
 help: ## Liste des cibles
 	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  %-18s %s\n", $$1, $$2}'
@@ -77,6 +77,9 @@ smoke: ## Smoke test via Nginx, contre la stack PROD démarrée ; arrête et rel
 # Scénarios complémentaires : SCENARIO=worst|ramp|contention|quotas make load-test
 load-test: build ## Test de charge k6 contre la stack prod (§9.4) ; SCENARIO=nominal par défaut
 	LOAD_BASE_URL=$(LOAD_BASE_URL) SCENARIO=$(SCENARIO) K6_IMAGE=$(K6_IMAGE) tests/Load/run-load-test.sh
+
+postman-healthz: ## Vérifie /healthz en 200 via Newman, depuis le réseau Compose de la stack PROD
+	docs/verify-healthz.sh
 
 lint: ## PHP-CS-Fixer (dry-run), container, YAML, PHPStan, Deptrac, OpenAPI
 	$(PHP) vendor/bin/php-cs-fixer check --diff

@@ -1133,6 +1133,8 @@ leboncoin-test/
 │   ├── conception.md                       # ce document
 │   ├── progress.md                         # suivi de l'avancement, importé par CLAUDE.md
 │   ├── openapi.yaml
+│   ├── FizzBuzz.postman_collection.json    # dérivée de l'openapi ; prise en main rapide (§14.5)
+│   ├── verify-healthz.sh                   # /healthz en 200 via Newman, réseau Compose (make postman-healthz)
 │   ├── review-corrections.md               # review du 2026-09-12
 │   └── benchmarks/
 │       ├── README.md                       # méthode, résultats, limites
@@ -1223,6 +1225,7 @@ leboncoin-test/
 | `test-unit` / `test-integration` / `test-functional` | un niveau précis (`test-db` d'abord pour les deux derniers) |
 | `smoke` | smoke test via Nginx |
 | `load-test` | test de charge k6 contre l'image `prod` (§9.4) |
+| `postman-healthz` | vérifie `/healthz` en `200` via Newman, depuis le réseau Compose de la stack prod (§14.5) |
 | `benchmarks` | exécute les scripts de `docs/benchmarks/` (hors CI) |
 | `lint` | PHP-CS-Fixer (dry-run), `cache:warmup --env=dev`, lint du container, lint YAML, PHPStan, **Deptrac**, lint OpenAPI |
 | `fix` | PHP-CS-Fixer avec correction |
@@ -1362,7 +1365,6 @@ Tel que spécifié, le service vise une **instance unique à trafic modéré**. 
 |---|---|---|
 | Tests de contrat OpenAPI automatisés (`league/openapi-psr7-validator`) | les réponses réelles respectent la spec | si des clients externes dépendent du contrat |
 | Tests de mutation (Infection) | mesure l'efficacité réelle des tests | si le domaine se complexifie |
-| Collection Postman dérivée de l'OpenAPI | prise en main rapide par les évaluateurs et les clients | à la livraison |
 
 ---
 
