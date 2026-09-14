@@ -6,11 +6,11 @@
 
 ## Où on en est
 
-- **Phase** : implémentation terminée (plan §12).
-- **Étape en cours** : aucune — étape 10 terminée.
-- **Prochaine étape** : aucune (dernière étape du plan). Livraison / commit à la demande.
+- **Phase** : plan §12 terminé.
+- **Étape en cours** : aucune — les 11 étapes du plan sont faites.
+- **Prochaine étape** : aucune.
 - **Bloquants** : aucun.
-- **Dépôt** : GitHub privé `chlie22/leboncoin-test`, remote `origin` en HTTPS, branche `main` ; étape 9b poussée (`66c6291`) ; étape 10 non commitée.
+- **Dépôt** : GitHub privé `chlie22/leboncoin-test`, remote `origin` en HTTPS, branche `main` ; étape 10 poussée (`27c4f47`).
 - **Dernière mise à jour** : 2026-09-14.
 
 ## Avancement du plan
@@ -26,13 +26,13 @@
 | 8 | API : DTO, contrôleurs, `HEAD`, erreurs | ✅ fait | `3569ffd`, run `34832451393` |
 | 9 | `/healthz`, logs, OPcache, smoke | ✅ fait | `fe59cfd`, run `34850124962` |
 | 9b | Test de charge k6 | ✅ fait | `66c6291`, run `34864015335` (job `load-test`, `workflow_dispatch`) |
-| 10 | README et runbook | ✅ fait | revue : `sqlite3` absent de l'image → sauvegarde corrigée en `VACUUM INTO` (§11.3, README, §6.8), testée en direct ; README relu |
+| 10 | README et runbook | ✅ fait | `27c4f47`, run `34867738878` |
 
 Statuts : ⏳ à faire · 🚧 en cours · ✅ fait · ⛔ bloqué. Une étape n'est ✅ qu'avec une **preuve** (commande et code de sortie, ou hash du commit).
 
 ## Prochaine action
 
-Plan §12 terminé. Commit / push de l'étape 10 à la demande du développeur.
+Plan §12 terminé et poussé. Rien de prévu à ce stade ; ouvertures possibles en §14 sur demande du développeur.
 
 - Sauvegarde SQLite : pas de CLI `sqlite3` dans l'image (minimalisme, §7.9) → `VACUUM INTO` via PDO depuis le conteneur PHP, sans rien ajouter à l'image ; vérifié en direct sur la base de prod (compte de lignes identique).
 - Sorties : `rtk proxy` ; codes : `$?` sans pipe. Push HTTPS.
@@ -47,7 +47,7 @@ Plan §12 terminé. Commit / push de l'étape 10 à la demande du développeur.
 
 ## Journal des sessions
 
-- **2026-09-14 (soir, 10 suite)** — Revue : `sqlite3` absente de l'image (constaté par l'agent) → `VACUUM INTO` via PDO retenu plutôt qu'ajouter la CLI (surface d'attaque, §7.9) ou garder l'écart flou ; corrigé et testé en direct dans README + conception.md (§11.3, §6.8).
+- **2026-09-14 (soir, 10 suite)** — `sqlite3` absente de l'image (constaté par l'agent) → `VACUUM INTO` via PDO retenu plutôt qu'ajouter la CLI (surface d'attaque, §7.9) ; corrigé et testé en direct ; `make ci` 0. Étape 10 faite : `27c4f47`, CI `34867738878`. **Plan §12 terminé.**
 - **2026-09-14 (soir, 10)** — README complet (§11.3) + section charge 9b conservée ; `docs/progress.md` à jour. Preuve : relecture. Pas de commit.
 - **2026-09-14 (soir, 9b suite)** — Correctif `chmod 777` k6 ; étape 9b faite : `66c6291`, run `34864015335`.
 - **2026-09-14 (soir, 9b)** — Load-test local nominal OK ; `make ci` 0 ; actionlint 0.
