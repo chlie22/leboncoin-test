@@ -117,7 +117,12 @@ run_k6() {
     local network="$1"
     local tmp
     tmp="$(mktemp -d)"
+    # grafana/k6 runs as a non-root user (uid 12345): mktemp's default 0700 blocks it from
+    # reading the script and writing summary.json. Harmless on macOS Docker Desktop's bind-mount
+    # bridge, which ignores host permission bits — this failed only on the Linux CI runner [mesure].
+    chmod 777 "$tmp"
     cp "$ROOT/tests/Load/fizzbuzz.js" "$tmp/fizzbuzz.js"
+    chmod 644 "$tmp/fizzbuzz.js"
     set +e
     docker run --rm \
         --network "$network" \
