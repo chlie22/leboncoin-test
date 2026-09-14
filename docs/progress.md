@@ -7,10 +7,10 @@
 ## Où on en est
 
 - **Phase** : implémentation.
-- **Étape en cours** : 8 — API (🚧 committée localement ; push et CI à faire).
+- **Étape en cours** : aucune — étape 8 terminée.
 - **Prochaine étape** : 9 — `/healthz`, logs, OPcache, smoke.
 - **Bloquants** : aucun.
-- **Dépôt** : GitHub privé `chlie22/leboncoin-test`, remote `origin` en HTTPS, branche `main` ; étape 7 poussée (`af00927`).
+- **Dépôt** : GitHub privé `chlie22/leboncoin-test`, remote `origin` en HTTPS, branche `main` ; étape 8 poussée (`3569ffd`).
 - **Dernière mise à jour** : 2026-09-14.
 
 ## Avancement du plan
@@ -23,7 +23,7 @@
 | 5 | Domain | ✅ fait | `a99355a`, run `34780267928` |
 | 6 | Application | ✅ fait | `9f6a2da`, run `34782724339` |
 | 7 | Persistance SQLite | ✅ fait | `af00927`, run `34786638347` |
-| 8 | API : DTO, contrôleurs, `HEAD`, erreurs | 🚧 en cours | 2026-09-14 : TDD fonctionnel rouge puis vert ; contrôle post-agent : messages exacts, enveloppe problem+json, `HEAD /v1/stats` 503 ; `make fix` 0 ; `make ci` 0 (179 tests, 1309 assertions, Deptrac 0/0, PHPStan OK) ; `make build` 0 ; prod `up --wait` 0 + `make smoke` 0 ; appels Nginx `/v1/fizzbuzz` et `/v1/stats` 200 ; `var/cache/prod` RO ; docs §3.3 / §5.7 / §9.3 + `http-api.md` sync ; arch-reviewer sans bloquant |
+| 8 | API : DTO, contrôleurs, `HEAD`, erreurs | ✅ fait | `3569ffd`, run `34832451393` |
 | 9 | `/healthz`, logs, OPcache, smoke | ⏳ à faire | — |
 | 9b | Test de charge k6 | ⏳ à faire | — |
 | 10 | README et runbook | ⏳ à faire | — |
@@ -32,9 +32,7 @@ Statuts : ⏳ à faire · 🚧 en cours · ✅ fait · ⛔ bloqué. Une étape n
 
 ## Prochaine action
 
-**Finir l'étape 8** : push sur accord explicite ; lire la CI ; consigner le hash et le run (`docs: record step 8 CI proof`).
-
-**Étape 9** ensuite : `HealthController`, Monolog + `RequestIdProcessor`, OPcache/preload, smoke restant (`/healthz` 200, `HEAD`, deux IP, 502, marqueurs de logs dont 413, démarrage) ; `HEALTHCHECK` Nginx (`up --wait` fiable) ; 404 journalisés en `error` avec la query string (§8.1).
+**Étape 9** : `HealthController`, Monolog + `RequestIdProcessor`, OPcache/preload, smoke restant (`/healthz` 200, `HEAD`, deux IP, 502, marqueurs de logs dont 413, démarrage) ; `HEALTHCHECK` Nginx (`up --wait` fiable) ; 404 journalisés en `error` avec la query string (§8.1).
 
 - Pièges étape 8 vérifiés : `WebTestCase` + connexion du conteneur (pas `kernelConnection()`) ; messages tableau `int|null` / `null|string` ; `JsonEncoder` + `JSON_INVALID_UTF8_SUBSTITUTE` pour `%FF` ; Content-Type problem+json via subscriber ; `detail` des erreurs dépend de `kernel.debug` (message d'exception en test, texte du statut en prod) ; rate limit : attendre 1 s après smoke avant un appel manuel.
 - Plans d'agent (`docs/superpowers/`) exclus via `.git/info/exclude`, jamais committés.
@@ -50,8 +48,8 @@ Statuts : ⏳ à faire · 🚧 en cours · ✅ fait · ⛔ bloqué. Une étape n
 
 ## Journal des sessions
 
-- **2026-09-14 (matin)** — Contrôle de l'étape 8 faite par agent : spec, contrat et appels réels via Nginx conformes ; tests durcis (messages exacts, problem+json, `HEAD` 503) ; `make ci` 0 (179/1309) ; commit local, pas de push.
-- **2026-09-14 (nuit, suite)** — Étape 8 prête à committer : plan sound, TDD (49 tests fonctionnels), `make ci` 0 (176/1184), smoke prod+dev 0, appels réels 200, docs sync ; revue d'architecture sans bloquant ; pas de commit.
+- **2026-09-14 (matin)** — Étape 8 faite : contrôle post-agent (spec, contrat, appels réels via Nginx) ; tests durcis (messages exacts, problem+json, `HEAD` 503) ; `make ci` 0 (179/1309) ; `3569ffd`, CI `34832451393`. Prochaine : 9.
+- **2026-09-14 (nuit, suite)** — Étape 8 prête à committer : TDD (49 tests fonctionnels), `make ci` 0 (176/1184), smoke prod+dev 0, docs sync ; revue d'architecture sans bloquant.
 - **2026-09-14 (nuit)** — Étape 7 faite : `af00927`, CI `34786638347`. Prochaine : 8.
 - **2026-09-13 (nuit, suite)** — Étape 6 faite. Prochaine : 7.
 - **2026-09-13 (fin de soirée)** — Étape 5 faite. Prochaine : 6.
