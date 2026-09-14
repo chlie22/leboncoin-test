@@ -15,13 +15,16 @@ REDOCLY = npx --yes @redocly/cli@2.52.1
 COMPOSE = docker compose
 DB_EXEC = $(or $(EXEC),$(COMPOSE) exec -T php)
 SMOKE_BASE_URL ?= http://127.0.0.1:8080
+LOAD_BASE_URL ?= http://nginx:8080
+SCENARIO ?= nominal
+K6_IMAGE ?= grafana/k6:1.3.0
 
 # UID et GID de l'hôte, repris par www-data dans l'image dev (compose.override.yaml).
 export HOST_UID := $(shell id -u)
 export HOST_GID := $(shell id -g)
 
 .DEFAULT_GOAL := help
-.PHONY: help start stop sh logs build install migrate stats-reset test-db test test-unit test-integration test-functional smoke lint fix ci benchmarks
+.PHONY: help start stop sh logs build install migrate stats-reset test-db test test-unit test-integration test-functional smoke load-test lint fix ci benchmarks
 
 help: ## Liste des cibles
 	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  %-18s %s\n", $$1, $$2}'
@@ -69,6 +72,11 @@ test-functional: test-db ## Tests fonctionnels (WebTestCase)
 
 smoke: ## Smoke test via Nginx, contre la stack PROD démarrée ; arrête et relance les conteneurs, laisse la prod démarrée
 	BASE_URL=$(SMOKE_BASE_URL) tests/Smoke/smoke.sh
+
+# Image prod + stack compose.yaml avec quotas relevés ; k6 via grafana/k6 ; seuils bloquants sur SCENARIO=nominal.
+# Scénarios complémentaires : SCENARIO=worst|ramp|contention|quotas make load-test
+load-test: build ## Test de charge k6 contre la stack prod (§9.4) ; SCENARIO=nominal par défaut
+	LOAD_BASE_URL=$(LOAD_BASE_URL) SCENARIO=$(SCENARIO) K6_IMAGE=$(K6_IMAGE) tests/Load/run-load-test.sh
 
 lint: ## PHP-CS-Fixer (dry-run), container, YAML, PHPStan, Deptrac, OpenAPI
 	$(PHP) vendor/bin/php-cs-fixer check --diff

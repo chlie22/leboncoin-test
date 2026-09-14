@@ -63,7 +63,7 @@ Principe directeur : **le plus simple qui tienne en production, dans le cadre d'
 | Disponibilité de la génération | **une fois l'instance démarrée**, la génération est servie même si l'enregistrement des statistiques échoue ; **au démarrage**, l'instance ne démarre pas si SQLite est inaccessible | mode dégradé (§5.10), séquence de démarrage (§7.6) |
 | Attente sur verrou SQLite | configurée à **200 ms** | **[source]** : borne l'attente d'un verrou, **pas** la durée totale d'une écriture (entrées-sorties, synchronisation) |
 | Bornes de traitement | PHP-FPM coupe une requête à **10 s**, Nginx abandonne à **15 s** | configuration (§7.3, §7.5) |
-| Latence | p95 < 50 ms à 10 req/s pour `limit ≤ 100` | **[objectif]** à démontrer par le test de charge k6 (§9.4) |
+| Latence | p95 < 50 ms à 10 req/s pour `limit ≤ 100` | **[mesure]** test de charge k6 (§9.4) : p95 = 11,51 ms (Apple M2 Pro, 2026-09-14) |
 | Arrêt propre | PHP-FPM termine les requêtes en cours (`STOPSIGNAL SIGQUIT`) | **[source]** : Dockerfile de l'image officielle |
 
 ---
@@ -565,7 +565,7 @@ Le mode dégradé **ne garantit donc pas** un 200 dans tous les cas : il couvre 
 
 **Pannes traduites en `StatisticsStoreUnavailable`** par l'adaptateur SQLite, d'après le code résultat SQLite primaire (`code & 0xFF`, qui couvre aussi les codes étendus) : `PERM` 3, `BUSY` 5, `READONLY` 8, `IOERR` 10, `CORRUPT` 11, `FULL` 13, `CANTOPEN` 14, `PROTOCOL` 15 (échec transitoire de verrou WAL), `NOTADB` 26. Les autres codes sont des erreurs de programmation et se propagent : `ERROR` 1 (syntaxe, table absente), `LOCKED` 6 (conflit au sein d'une même connexion), `CONSTRAINT` 19, etc. Le tri se fait par code et non par classe d'exception DBAL : le convertisseur SQLite de DBAL classe d'après des sous-chaînes du message, et range disque plein et erreurs d'entrées-sorties dans la classe générique `DriverException` **[source]** (`Driver\API\SQLite\ExceptionConverter`, DBAL 4.4.4). Sous PDO, le code de l'exception DBAL est le code résultat SQLite : sondes du 2026-09-13, verrou 5, lecture seule 8, fichier impossible à ouvrir 14 **[source]**.
 
-**Capacité pendant une contention** **[hypothèse]** : si chaque requête attend les 200 ms complets, environ 2 processus PHP-FPM restent occupés en moyenne au débit maximal de 10 req/s. Ce calcul ne couvre ni la lenteur d'entrées-sorties ni les requêtes qui partagent le même disque ; il reste à confirmer par un test de charge avec contention injectée (§9.1).
+**Capacité pendant une contention** **[mesure]** (étape 9b, verrou `BEGIN IMMEDIATE` 55 s, 10 req/s) : latence médiane 228 ms (≈ `busy_timeout` 200 ms), max ~3 VU simultanés, 100 % de réponses 200, centaines de `statistics.record_skipped` (`LockWaitTimeoutException`). L'ordre de grandeur « ~2 processus occupés » du calcul précédent est confirmé sur Apple M2 Pro.
 
 #### « Journaliser » : un signal d'exploitation, pas une sauvegarde des appels
 
@@ -923,7 +923,7 @@ Le quota n'est **pas dupliqué** dans Symfony : le composant RateLimiter nécess
 | Directive | Valeur | Pourquoi |
 |---|---|---|
 | `pm` | `static` | nombre de processus prévisible en conteneur |
-| `pm.max_children` | mémoire du conteneur ÷ mémoire d'un processus **mesurée** **[objectif]** ; `8` provisoire jusqu'à la mesure de l'étape 9b | vrai plafond de requêtes simultanées |
+| `pm.max_children` | mémoire du conteneur ÷ mémoire d'un processus **mesurée** **[mesure]** (~27–30 MiB RSS / worker sous charge nominale, étape 9b) ; **conservé à `8`** : suffisant au débit admis 10 req/s (contention : ≤ 3 VU) | vrai plafond de requêtes simultanées |
 | `pm.max_requests` | `500` | recycle les processus contre les fuites mémoire |
 | `request_terminate_timeout` | `10s` | coupe une requête bloquée (y compris par une lenteur d'entrées-sorties) et libère le processus ; inférieur au timeout Nginx (15 s) pour que FPM tranche en premier |
 | `ping.path` | `/ping` | sonde de liveness FPM pour un orchestrateur (non routée par Nginx) |
@@ -1074,22 +1074,22 @@ Versions relevées sur Packagist le 2026-09-11 : `symfony/framework-bundle` 8.1.
 
 Chaque paquet est installé à l'étape du plan qui s'en sert (§12). **[source]** `composer show`, 2026-09-13 : à l'étape 2, `phpunit/phpunit` 13.3.3, `phpstan/phpstan` 2.2.14, `phpstan/phpstan-symfony` 2.0.20, `friendsofphp/php-cs-fixer` 3.95.25 et `deptrac/deptrac` 4.7.1. `psr/log` 3.0.2 est déclaré directement à l'étape 6 : `Application` en dépend (`LoggerInterface`), il n'arrive plus seulement par Symfony **[source]** `composer show psr/log`, 2026-09-13. À l'étape 7 : `doctrine/dbal` 4.4.4, `doctrine/doctrine-bundle` 3.3.2 et `doctrine/doctrine-migrations-bundle` 4.0.1, qui apporte `doctrine/migrations` 3.9.7 **[source]** (`composer require`, 2026-09-13). À l'étape 8 : `symfony/validator` 8.1.6, `symfony/serializer` 8.1.6, `symfony/property-access` 8.1.4, `symfony/property-info` 8.1.6 (avec `symfony/type-info` 8.1.5), `symfony/browser-kit` 8.1.5 (avec `symfony/dom-crawler` 8.1.5) **[source]** `composer.lock`, 2026-09-14. À l'étape 9 : `symfony/monolog-bundle` 4.1.0, `monolog/monolog` 3.12.0, `symfony/monolog-bridge` 8.1.6 **[source]** `composer show`, 2026-09-14. `extra.symfony.docker` vaut `false` dans `composer.json`, pour que les recettes Flex n'ajoutent pas de service de base de données à `compose.yaml`. La recette de DoctrineBundle, qui écrit une configuration ORM, a été réécrite en DBAL seul.
 
-### 9.4 Test de charge (k6) — à réaliser
+### 9.4 Test de charge (k6)
 
-Objectif : **démontrer** les exigences du §1.2 qui sont aujourd'hui des objectifs. Aucun résultat n'existe encore.
+Objectif : **démontrer** les exigences de latence du §1.2. Réalisé à l'étape 9b ; chiffres détaillés dans le README.
 
 | Élément | Choix |
 |---|---|
-| Outil | k6, exécuté via son image Docker officielle (`grafana/k6`) |
-| Script | `tests/Load/fizzbuzz.js`, versionné |
-| Cible | la stack Docker complète **via Nginx**, image `prod` (OPcache et preload actifs) |
+| Outil | k6 via l'image Docker officielle `grafana/k6:1.3.0` |
+| Script | `tests/Load/fizzbuzz.js` (+ `run-load-test.sh`, `hold-sqlite-lock.php`) |
+| Cible | stack Docker **via Nginx**, image `prod` (`docker compose -f compose.yaml`, OPcache et preload) ; `APP_ENV=prod` exigé |
 | Scénario nominal | 10 req/s constants pendant 2 min, paramètres variés avec `limit ≤ 100` |
-| Scénarios complémentaires | pire cas (`limit = 10 000`, chaînes de 50 caractères) mesuré à part ; palier au-delà du débit nominal pour observer la saturation ; **contention SQLite injectée** pour qualifier l'hypothèse du §5.10 |
-| Seuils bloquants **[objectif]** | scénario nominal : `http_req_duration` p95 < 50 ms ; taux d'échec < 1 % |
-| Mesures associées | mémoire par processus PHP-FPM (pour `pm.max_children`), taille du volume et du WAL après le test |
-| Quotas | relevés **uniquement pour ce test** via les variables `RATE_LIMIT_*` ; un second passage avec les quotas de production vérifie que les 429 apparaissent au bon seuil |
-| Exécution | `make load-test` ; en CI, workflow **manuel** (`workflow_dispatch`) |
-| Livrable | résumé k6 (p50, p95, p99, débit, erreurs) consigné dans le README, avec la machine de mesure |
+| Scénarios complémentaires | `worst` (`limit = 10 000`, chaînes de 50 car.) ; `ramp` (10→60 req/s) ; `contention` (verrou SQLite `BEGIN IMMEDIATE`) ; `quotas` (production) |
+| Seuils bloquants **[mesure]** | nominal : p95 = 11,51 ms (< 50 ms) ; échecs = 0 % (< 1 %) ; code de sortie k6 0 (Apple M2 Pro, 2026-09-14) |
+| Mesures associées | RSS workers ~27–30 MiB ; `app.db` 242 Ko après nominal ; WAL 0 |
+| Quotas | relevés à 100 r/s pour le load-test ; second passage prod : 23×200 + 78×429 à 5 req/s / 20 s |
+| Exécution | `make load-test` ; CI : job `load-test` en `workflow_dispatch` seul |
+| Livrable | résumé dans le README (machine, p50/p95/p99, débit, erreurs) |
 
 ### 9.5 Mesures de conception (`docs/benchmarks/`)
 
@@ -1189,7 +1189,9 @@ leboncoin-test/
 │   │   └── Cli/ApplyStatisticsWindowCommandTest.php
 │   ├── Functional/{GenerateFizzBuzzEndpointTest.php, StatisticsEndpointTest.php, HealthEndpointTest.php, ApplicationLoggingPrivacyTest.php}
 │   ├── Smoke/smoke.sh                                           # via Nginx : quotas, erreurs JSON, en-têtes, logs, démarrage
-│   ├── Load/fizzbuzz.js                                         # k6 : démonstration de l'objectif de latence
+│   ├── Load/fizzbuzz.js                                         # k6 : scénarios nominal / worst / ramp / contention / quotas
+│   ├── Load/run-load-test.sh                                    # orchestration : prod only, quotas, k6, RSS, WAL
+│   ├── Load/hold-sqlite-lock.php                                # verrou BEGIN IMMEDIATE pour la contention (§5.10)
 │   ├── Support/InMemoryRequestStatisticsStore.php
 │   ├── Support/RecordingLogger.php                             # logger PSR-3 de test
 │   ├── Support/SqliteTestDatabase.php                          # connexions, vidage, invariants du §6.3, migrations en sous-processus
@@ -1238,11 +1240,11 @@ Les commandes PHP et Composer des cibles tournent **sur l'hôte** par défaut, c
 | `tests` | setup PHP 8.5 (avec `pdo_sqlite`) → cache Composer → `composer install` → migrations de test (`doctrine:migrations:migrate --env=test`, comme `make test-db`) → PHPUnit (unitaires, contrat, intégration, concurrence, fonctionnels) |
 | `openapi` | Node 24 → `npx --yes @redocly/cli@2.52.1 lint` (configuration `redocly.yaml`) |
 | `docker` | `docker compose -f compose.yaml build php` → `docker compose -f compose.yaml up -d --wait --wait-timeout 60` (sans la surcharge dev) → `tests/Smoke/smoke.sh` → en cas d'échec, `ps -a` et logs de la stack |
-| `load-test` *(manuel)* | `workflow_dispatch` : build `prod` → quotas relevés → k6 → seuils bloquants (§9.4) |
+| `load-test` *(manuel)* | `workflow_dispatch` uniquement : build `prod` → quotas relevés → k6 nominal → seuils bloquants (§9.4) ; groupe de concurrency distinct `load-test-${{ github.ref }}` ; le groupe workflow inclut `github.event_name` pour qu'un push n'annule pas un dispatch et inversement |
 
 Fichier `.github/workflows/ci.yaml` (étape 4) :
 
-- **Déclencheurs** : `push` sur `main`, `pull_request`, `workflow_dispatch`, sans filtre de chemins (`docs/openapi.yaml` est sous `docs/`). Un nouveau run sur la même référence annule le précédent (`concurrency`). Le futur job `load-test` aura son propre groupe, pour ne pas annuler un run de push ni être annulé par lui.
+- **Déclencheurs** : `push` sur `main`, `pull_request`, `workflow_dispatch`, sans filtre de chemins (`docs/openapi.yaml` est sous `docs/`). Concurrency : `group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}` avec `cancel-in-progress: true`, pour que push et dispatch ne s'annulent pas mutuellement. Le job `load-test` a en plus `concurrency.group: load-test-${{ github.ref }}` et `if: github.event_name == 'workflow_dispatch'` (jamais sur push / PR).
 - **Jobs en parallèle**, sur `ubuntu-24.04`, chacun avec un `timeout-minutes` (10, 10, 5 et 15) : le dépôt est privé, les minutes sont décomptées. Permissions réduites à `contents: read`.
 - **Ordre du job `quality`** : celui de la cible `lint` du `Makefile`. `cache:warmup --env=dev` précède PHPStan, qui lit le container XML. `composer audit` suit `composer install` : il audite les paquets installés. Sans `vendor/`, Composer 2.9.5 affiche « No packages - skipping audit. » et réussit sans rien vérifier ; Composer 2.10.3 refuse (« No installed packages found », code 1) **[source]** (essais du 2026-09-13 sur une copie de `composer.json` et `composer.lock`).
 - **Actions épinglées par SHA de commit**, le tag en commentaire **[source]** (GitHub, relevé le 2026-09-13) : `actions/checkout` v7.0.1, `shivammathur/setup-php` 2.37.2, `actions/setup-node` v7.0.0, `actions/cache` v6.1.0. Mise à jour volontaire, comme les tags des images.

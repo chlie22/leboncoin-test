@@ -3,6 +3,7 @@
 # Les jobs quality et tests reprennent les commandes des cibles `ci`, `lint` et `test` du Makefile :
 # modifier les deux fichiers ensemble. Le job docker pilote la stack de production avec `-f compose.yaml`,
 # jamais sans : compose.override.yaml basculerait php sur la cible dev.
+# Le job load-test ne tourne que sur workflow_dispatch (jamais push / pull_request).
 # Actions épinglées par SHA de commit, tag en commentaire : les mettre à jour volontairement.
 name: CI
 
@@ -12,9 +13,10 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Un nouveau run sur la même référence annule le précédent, devenu obsolète.
+# push/PR et workflow_dispatch ne partagent pas le même groupe : un run manuel (load-test)
+# n'annule pas un run de push et n'est pas annulé par lui (§11.2).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -22,6 +24,7 @@ permissions:
 
 env:
   PHP_VERSION: '8.5'
+  K6_IMAGE: grafana/k6:1.3.0
 
 defaults:
   run:
@@ -138,6 +141,8 @@ jobs:
     name: docker
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # Smoke sur push/PR ; sur workflow_dispatch le job load-test porte la vérification stack.
+    if: github.event_name != 'workflow_dispatch'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -153,6 +158,37 @@ jobs:
       # hors de TRUSTED_PROXY_CIDR. En cas d'échec, revoir le réseau avant de toucher au test.
       - name: Smoke test via Nginx
         run: tests/Smoke/smoke.sh
+
+      - name: État et logs de la stack
+        if: failure()
+        run: |
+          docker compose -f compose.yaml ps -a
+          docker compose -f compose.yaml logs --no-color
+
+  # Manuel uniquement : ne tourne pas sur push ni pull_request.
+  load-test:
+    name: load-test
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    concurrency:
+      group: load-test-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build de l'image prod
+        run: docker compose -f compose.yaml build php
+
+      - name: Pull k6
+        run: docker pull "${{ env.K6_IMAGE }}"
+
+      - name: Test de charge k6 (nominal, seuils bloquants)
+        run: |
+          chmod +x tests/Load/run-load-test.sh
+          SCENARIO=nominal K6_IMAGE="${{ env.K6_IMAGE }}" make load-test
 
       - name: État et logs de la stack
         if: failure()

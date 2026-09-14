@@ -41,6 +41,8 @@ tests/
 ├── Functional/
 ├── Smoke/smoke.sh
 ├── Load/fizzbuzz.js
+├── Load/run-load-test.sh
+├── Load/hold-sqlite-lock.php
 └── Support/{InMemoryRequestStatisticsStore.php, RecordingLogger.php}
 ```
 

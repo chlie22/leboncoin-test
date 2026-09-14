@@ -62,12 +62,13 @@ make sh                                                 # shell dans le conteneu
 make logs                                               # logs des services, en continu
 make build                                              # image prod : docker compose -f compose.yaml build php
 make smoke                                              # smoke test via Nginx, contre la stack PROD démarrée (refuse la dev) ; destructif : arrête PHP, down/up, laisse la prod démarrée ; SMOKE_BASE_URL pour une autre adresse
+make load-test                                          # k6 contre la stack prod (§9.4) ; SCENARIO=nominal|worst|ramp|contention|quotas ; seuils bloquants sur nominal
 make ci EXEC='docker compose exec -T php'               # vérification complète dans le conteneur (npx reste sur l'hôte)
 ```
 
 `make migrate` et `make stats-reset` visent la base de la stack : ils passent par `docker compose exec -T php` sauf si `EXEC` est fourni (prod : `EXEC='docker compose -f compose.yaml exec -T php'`). Au démarrage, l'entrypoint applique les migrations puis `app:statistics:apply-window`, seulement pour `php-fpm`. Après une modification de `docker/php/docker-entrypoint.sh` ou du `Dockerfile`, reconstruire l'image dev avec `docker compose build php`.
 
-Prévue par la spec (§11.1), créée à l'étape 9b. Avant de s'en servir, vérifier dans `docs/progress.md` que l'étape est faite : `make load-test`.
+`make load-test` exige l'image prod (`make build`), refuse la stack dev, relève les `RATE_LIMIT_*` (sauf `SCENARIO=quotas`), lance `grafana/k6:1.3.0` sur le réseau Compose, puis restaure les quotas de production.
 
 ## Architecture
 

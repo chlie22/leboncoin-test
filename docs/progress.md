@@ -7,10 +7,10 @@
 ## Où on en est
 
 - **Phase** : implémentation.
-- **Étape en cours** : aucune — étape 9 terminée.
-- **Prochaine étape** : 9b — test de charge k6.
-- **Bloquants** : aucun.
-- **Dépôt** : GitHub privé `chlie22/leboncoin-test`, remote `origin` en HTTPS, branche `main` ; étape 9 poussée (`fe59cfd`).
+- **Étape en cours** : 9b — test de charge k6 (§9.4) ; preuves locales OK, ✅ réservé au run CI `load-test` vert.
+- **Prochaine étape** : déclencher `workflow_dispatch` (job `load-test`) après commit/push, puis étape 10.
+- **Bloquants** : aucun (attente preuve CI pour clôturer 9b).
+- **Dépôt** : GitHub privé `chlie22/leboncoin-test`, remote `origin` en HTTPS, branche `main`.
 - **Dernière mise à jour** : 2026-09-14.
 
 ## Avancement du plan
@@ -25,32 +25,30 @@
 | 7 | Persistance SQLite | ✅ fait | `af00927`, run `34786638347` |
 | 8 | API : DTO, contrôleurs, `HEAD`, erreurs | ✅ fait | `3569ffd`, run `34832451393` |
 | 9 | `/healthz`, logs, OPcache, smoke | ✅ fait | `fe59cfd`, run `34850124962` |
-| 9b | Test de charge k6 | ⏳ à faire | — |
-| 10 | README et runbook | ⏳ à faire | — |
+| 9b | Test de charge k6 | 🚧 en cours | local : `make ci` 0 ; `make load-test` nominal 0 (p95 11,51 ms) ; CI load-test : à déclencher |
+| 10 | README et runbook | ⏳ à faire | section charge déjà dans README |
 
 Statuts : ⏳ à faire · 🚧 en cours · ✅ fait · ⛔ bloqué. Une étape n'est ✅ qu'avec une **preuve** (commande et code de sortie, ou hash du commit).
 
 ## Prochaine action
 
-**Étape 9b** : test de charge k6 (§9.4), préparé par `make load-test`.
+**Clôturer 9b** : commit → push → `gh workflow run` / `workflow_dispatch` → job `load-test` vert → marquer ✅. Puis **étape 10** (README/runbook complet).
 
-- Pièges étape 9 : Shared → DBAL seul pour `/healthz` (pas le port) ; fuite `str1`/`str2` dans logs Symfony debug → `RedactQueryStringProcessor` ; BusyBox wget sans HEAD → HEAD `/healthz` via PHP sur le réseau de confiance ; php arrêté → souvent **504** (IP amont figée) plutôt que 502 sur Docker Desktop — smoke accepte 502\|504 ; preuve OPcache jamais en CLI : le fichier de preload généré par Symfony s'arrête en CLI (0 classe même avec `opcache.enable_cli=1`) ; mesurer `opcache_get_status()` sous FPM (client FastCGI vers `127.0.0.1:9000`, script dans `/tmp`) ; `make smoke` exige la stack prod (refuse la dev) et la laisse démarrée ; `docker compose -f compose.yaml ps` affiche aussi la stack dev (même projet) : vérifier `APP_ENV` ; ne pas confondre le mot `zend_extension` dans un commentaire d'`app.prod.ini`.
-- Plans d'agent (`docs/superpowers/`) exclus via `.git/info/exclude`.
+- Pièges 9b : stack prod only (`-f compose.yaml`, `APP_ENV`) ; `compose cp` impossible (rootfs RO) → holder SQLite via stdin ; pas de `ps` dans l'image → RSS via `/proc` ; quotas relevés 100 r/s puis restore nginx ; concurrency CI = `event_name` dans le groupe workflow + groupe job `load-test-*` ; ✅ 9b = run CI, pas seulement local.
 - Sorties : `rtk proxy` ; codes : `$?` sans pipe. Push HTTPS.
 
 ## Décisions et écarts pris pendant l'implémentation
 
 - **2026-09-12** — `AGENTS.md` adapté ; `"php": "^8.5"` ; `src/Controller/` supprimé.
 - **2026-09-13** — Pas de `.env.dev.local` versionné ; dépôt privé (D4) ; `make` sur l'hôte + `EXEC` ; Deptrac `Shared` / `PsrLog` / `--fail-on-uncovered` ; Docker prod+override, `read_only` ; Q15 élargie 403/413 ; CI SHA + Composer 2.10.3.
-- **2026-09-13** — Étapes 5–6 : pas d'`equals()` ; messages entiers ; `psr/log` direct ; warning classes only ; fenêtre vide côté adaptateur.
-- **2026-09-14** — Étape 7 : entrypoint php-fpm seulement ; `STATS_WINDOW_SIZE` strict ; DBAL seul ; transaction manuelle + codes SQLite.
-- **2026-09-14** — Étape 8 : packages validator/serializer/property-* + browser-kit ; monolog → étape 9 ; `JsonErrorFormatSubscriber` + rewrite Content-Type ; `JsonEncoder` UTF-8 substitute. §3.3, §5.7, §9.3.
-- **2026-09-14** — Étape 9 : monolog-bundle 4.1.0 ; `RedactQueryStringProcessor` (§8.1) ; `fastcgi_connect_timeout 3s` ; smoke 502\|504 si IP amont figée ; dépréciations et 400/404/405 sous le seuil `warning` de la prod (`log_level: info`) ; cache serializer/type-info du DTO précalculé au build (`GenerateFizzBuzzQueryCacheWarmer`) plutôt que rendu inscriptible, pour ne pas rouvrir la lecture seule de `var/cache/prod` (D validée §7.9) ; smoke réservé à la stack prod. §5.3, §7.2, §7.3, §7.6, §8.1, §9.1, §9.3, §10.
+- **2026-09-13–14** — Étapes 5–8 : messages entiers ; DBAL seul ; validator/serializer ; monolog → étape 9.
+- **2026-09-14** — Étape 9 : monolog 4.1.0 ; `RedactQueryStringProcessor` ; smoke prod ; cache DTO au build.
+- **2026-09-14** — Étape 9b : k6 `grafana/k6:1.3.0` ; quotas load-test 100 r/s ; `pm.max_children=8` conservé (~27–30 MiB/worker) ; contention réelle `BEGIN IMMEDIATE` ; README section charge. §1.2, §5.10, §7.5, §9.4, §10, §11.1–11.2.
 
 ## Journal des sessions
 
-- **2026-09-14 (soir)** — Étape 9 faite : cache serializer/type-info du DTO précalculé au build (0 warning, contre 6 par appel) ; 400/404/405 en `log_level: info` (plus journalisés en prod) ; `make ci` 0 (192/1340), smoke prod 0 (270 s) ; `fe59cfd`, CI `34850124962`. Prochaine : 9b.
-- **2026-09-14 (après-midi)** — Revue de l'étape 9 : smoke durci (contrôles vides corrigés, garde anti-stack dev), preuve OPcache refaite sous FPM, dépréciations hors logs prod, docs sync ; `make ci` 0 (190/1335), smoke prod 0.
-- **2026-09-14 (midi)** — Étape 9 locale (agent) : HealthController, Monolog+processors, HEALTHCHECK, smoke complet, `make ci` 0 (190/1335).
-- **2026-09-14 (matin)** — Étape 8 faite : `3569ffd`, CI `34832451393`. Prochaine : 9.
-- **2026-09-14 (nuit, suite)** — Étape 8 prête à committer.
+- **2026-09-14 (soir, 9b)** — Load-test local : nominal p50 8,45 / p95 11,51 / p99 15,52 ms, 0 % échec, exit 0 ; worst/ramp/contention/quotas OK ; `make ci` 0 ; actionlint 0 ; CI load-test pas encore déclenché.
+- **2026-09-14 (soir)** — Étape 9 faite : `fe59cfd`, CI `34850124962`. Prochaine : 9b.
+- **2026-09-14 (après-midi)** — Revue étape 9 : smoke durci, OPcache FPM, docs sync.
+- **2026-09-14 (midi)** — Étape 9 locale : HealthController, Monolog, smoke.
+- **2026-09-14 (matin)** — Étape 8 faite : `3569ffd`, CI `34832451393`.
