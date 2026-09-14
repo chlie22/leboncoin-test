@@ -37,3 +37,12 @@ services:
             $configuredWindowSize: '%env(STATS_WINDOW_SIZE)%'
 
     App\FizzBuzz\Application\Port\RequestStatisticsStore: '@App\FizzBuzz\Infrastructure\Persistence\SqliteRequestStatisticsStore'
+
+    # Allow error bodies that embed invalid UTF-8 input (e.g. str1=%FF) to stay application/problem+json
+    # instead of falling back to HTML when json_encode would fail (docs/conception.md §3.3, §4.4).
+    # Flags: JSON_INVALID_UTF8_SUBSTITUTE (2097152) | JSON_PRESERVE_ZERO_FRACTION (1024).
+    serializer.encoder.json:
+        class: Symfony\Component\Serializer\Encoder\JsonEncoder
+        arguments:
+            $defaultContext:
+                json_encode_options: 2098176

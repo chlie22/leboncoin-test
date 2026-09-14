@@ -144,7 +144,7 @@ Il existe deux familles d'erreurs, au comportement différent :
 
 | Famille | Exemples | Message | Erreurs remontées |
 |---|---|---|---|
-| **Conversion** : la valeur ne peut pas devenir un entier | `int1=abc`, `int1=3.5`, `int1[]=3` | message générique de Symfony : « This value should be of type int. » | **uniquement les erreurs de conversion** : Symfony n'exécute la validation que si toutes les conversions ont réussi **[source]** |
+| **Conversion** : la valeur ne peut pas devenir le type attendu | `int1=abc`, `int1=3.5` ; tableaux `int1[]=3`, `str1[]=a` | scalaires : « This value should be of type int. » ; tableaux sur propriété nullable : « … of type int\|null. » / « … of type null\|string. » **[mesure]** (Symfony 8.1.6 + DTO `?int` / `?string`) | **uniquement les erreurs de conversion** : Symfony n'exécute la validation que si toutes les conversions ont réussi **[source]** |
 | **Validation** : la valeur est lisible mais enfreint une règle | paramètre absent ou vide, hors bornes, trop long, caractère de contrôle | message de la contrainte ; pour un paramètre absent ou vide : « This parameter is required and must not be empty. » | **toutes les violations d'un coup** |
 
 Exemple : `GET /v1/fizzbuzz?int1=3&int2=5&limit=0&str2=buzz`
@@ -173,7 +173,8 @@ Chaque ligne relève d'un comportement **[source]** de Symfony 8.1.6 ou d'une **
 | `int1=3`, `int1=03` | — | 200 ; `03` vaut 3 (même combinaison statistique) |
 | `int1` absent | validation | 400 « This parameter is required and must not be empty. » (`NotNull`) |
 | `int1=` (vide) | validation | 400, même message : pour un entier nullable, `''` est converti en `null` **[source]** |
-| `abc`, `3.5`, `+3`, ` 3`, `3e2`, `int1[]=3` | conversion | 400 « This value should be of type int. » |
+| `abc`, `3.5`, `+3`, ` 3`, `3e2` | conversion | 400 « This value should be of type int. » |
+| `int1[]=3` | conversion | 400 « This value should be of type int\|null. » **[mesure]** (propriété `?int`) |
 | `-3`, `0`, `limit=10001` | validation | 400 (bornes) |
 | `int1=99999999999999999999` | validation | 400 (bornes). Symfony convertit d'abord la valeur en `PHP_INT_MAX`, puis la borne haute la rejette : aucune valeur tronquée n'est acceptée |
 | `int1=3&int1=4` | — | la **dernière valeur** l'emporte (analyse standard de la query string par PHP) ; déconseillé et documenté |
@@ -182,7 +183,7 @@ Chaque ligne relève d'un comportement **[source]** de Symfony 8.1.6 ou d'une **
 | `str1=0`, `str1=%20` (espace) | — | **200** : `NotBlank` accepte `"0"` et `" "` **[source]** |
 | `str1=fizz%0A` (saut de ligne final) | validation | 400. Avec l'ancre PCRE `$`, cette valeur passerait **[mesure]** : la regex utilise l'ancre de fin stricte `\z` |
 | `fi%0Azz`, `%0D`, `%09`, `%00` | validation | 400 (caractère de contrôle) |
-| `str1[]=a` | conversion | 400 « This value should be of type string. » |
+| `str1[]=a` | conversion | 400 « This value should be of type null\|string. » **[mesure]** (propriété `?string`) |
 | 51 points de code, UTF-8 invalide (`%FF`) | validation | 400 |
 | aucun paramètre | validation | 400, avec les 5 violations |
 
@@ -213,6 +214,8 @@ Le critère retenu est le **pire cas de réponse** : `limit` éléments valant c
 - `AbstractController::json()` impose explicitement les options par défaut, ce qui **écrase** toute configuration globale du serializer.
 - `JsonResponse::setEncodingOptions()` appelée après le constructeur **décode puis ré-encode** les données.
 - → Les contrôleurs encodent **une seule fois** avec `json_encode(..., flags)` puis `JsonResponse::fromJsonString()`.
+- Le `SerializerErrorRenderer` sérialise les erreurs au format `json` (`Content-Type: application/json`) : `JsonErrorFormatSubscriber` force le format de requête et réécrit le type en `application/problem+json` sur les 4xx/5xx **[mesure]** (étape 8).
+- Une violation qui embarque de l'UTF-8 invalide (`str1=%FF`) fait échouer `json_encode` du corps d'erreur sauf si `serializer.encoder.json` active `JSON_INVALID_UTF8_SUBSTITUTE` (`config/services.yaml`) **[mesure]** (étape 8).
 
 **Pire cas** (`limit = 10 000`) **[mesure]**, script `03-json-reponse.php`. Le périmètre couvre la génération et `json_encode`, **pas** la mémoire totale d'une requête Symfony :
 
@@ -1062,7 +1065,7 @@ Base de test : `var/test.db` (`DATABASE_URL` défini dans `.env.test`), migrée 
 
 Versions relevées sur Packagist le 2026-09-11 : `symfony/framework-bundle` 8.1.6, `doctrine/doctrine-bundle` 3.3, `doctrine/doctrine-migrations-bundle` 4.0, `phpunit/phpunit` 13.3, `phpstan/phpstan` 2.2, `deptrac/deptrac` 4.7.1.
 
-Chaque paquet est installé à l'étape du plan qui s'en sert (§12). **[source]** `composer show`, 2026-09-13 : à l'étape 2, `phpunit/phpunit` 13.3.3, `phpstan/phpstan` 2.2.14, `phpstan/phpstan-symfony` 2.0.20, `friendsofphp/php-cs-fixer` 3.95.25 et `deptrac/deptrac` 4.7.1. `symfony/browser-kit` arrive à l'étape 8, avec les premiers `WebTestCase`. `psr/log` 3.0.2 est déclaré directement à l'étape 6 : `Application` en dépend (`LoggerInterface`), il n'arrive plus seulement par Symfony **[source]** `composer show psr/log`, 2026-09-13. À l'étape 7 : `doctrine/dbal` 4.4.4, `doctrine/doctrine-bundle` 3.3.2 et `doctrine/doctrine-migrations-bundle` 4.0.1, qui apporte `doctrine/migrations` 3.9.7 **[source]** (`composer require`, 2026-09-13). `extra.symfony.docker` vaut `false` dans `composer.json`, pour que les recettes Flex n'ajoutent pas de service de base de données à `compose.yaml`. La recette de DoctrineBundle, qui écrit une configuration ORM, a été réécrite en DBAL seul.
+Chaque paquet est installé à l'étape du plan qui s'en sert (§12). **[source]** `composer show`, 2026-09-13 : à l'étape 2, `phpunit/phpunit` 13.3.3, `phpstan/phpstan` 2.2.14, `phpstan/phpstan-symfony` 2.0.20, `friendsofphp/php-cs-fixer` 3.95.25 et `deptrac/deptrac` 4.7.1. `psr/log` 3.0.2 est déclaré directement à l'étape 6 : `Application` en dépend (`LoggerInterface`), il n'arrive plus seulement par Symfony **[source]** `composer show psr/log`, 2026-09-13. À l'étape 7 : `doctrine/dbal` 4.4.4, `doctrine/doctrine-bundle` 3.3.2 et `doctrine/doctrine-migrations-bundle` 4.0.1, qui apporte `doctrine/migrations` 3.9.7 **[source]** (`composer require`, 2026-09-13). À l'étape 8 : `symfony/validator` 8.1.6, `symfony/serializer` 8.1.6, `symfony/property-access` 8.1.4, `symfony/property-info` 8.1.6 (avec `symfony/type-info` 8.1.5), `symfony/browser-kit` 8.1.5 (avec `symfony/dom-crawler` 8.1.5) **[source]** `composer.lock`, 2026-09-14. `symfony/monolog-bundle` reste pour l'étape 9. `extra.symfony.docker` vaut `false` dans `composer.json`, pour que les recettes Flex n'ajoutent pas de service de base de données à `compose.yaml`. La recette de DoctrineBundle, qui écrit une configuration ORM, a été réécrite en DBAL seul.
 
 ### 9.4 Test de charge (k6) — à réaliser
 

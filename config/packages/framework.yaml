@@ -8,6 +8,12 @@ framework:
     #esi: true
     #fragments: true
 
+    exceptions:
+        App\FizzBuzz\Application\Exception\StatisticsStoreUnavailable:
+            status_code: 503
+        App\FizzBuzz\Domain\Exception\InvalidFizzBuzzParameters:
+            status_code: 500
+
 when@test:
     framework:
         test: true
