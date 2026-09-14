@@ -29,6 +29,13 @@ services:
         restart: true
     networks:
       - app
+    healthcheck:
+      # From 127.0.0.1 inside the container — allowed by /healthz (docs/conception.md §7.3, §7.6).
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:8080/healthz']
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
 
   php:
     build:

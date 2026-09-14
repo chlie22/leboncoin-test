@@ -9,7 +9,7 @@ paths:
 
 # Nginx, PHP-FPM and Docker
 
-Reference: `docs/conception.md` §7 and §8.1. Validate a change with the smoke test through Nginx (`make smoke`), never with Symfony functional tests alone.
+Reference: `docs/conception.md` §7 and §8.1. Validate a change with the smoke test through Nginx (`make smoke`), never with Symfony functional tests alone. The smoke needs the production stack and refuses the dev one: it stops PHP, runs `down`/`up` (volumes kept) and leaves the production stack running.
 
 - Nginx is the only source of `Cache-Control: no-store`: `fastcgi_hide_header Cache-Control` in `fastcgi-app.conf`, the header in `headers.conf`. A `location` that declares its own `add_header` stops inheriting the server-level ones: re-include `headers.conf` there.
 - Nginx error pages use internal URIs (`error_page 414 /_errors/414;` with `location = /_errors/414 { internal; ... }`), never named locations: an early 414 has an empty URI, and a named location turns it into a 500. Documented exception (§4.4): a header over 8 KB (400) and a direct call to `/_errors/*` (404) get Nginx's HTML pages.
@@ -28,7 +28,7 @@ Reference: `docs/conception.md` §7 and §8.1. Validate a change with the smoke 
   - Any other command skips them, so a broken volume can still be diagnosed.
   - An unreachable SQLite or an invalid `STATS_WINDOW_SIZE` at startup must fail the container.
   - The entrypoint is copied into the image: after changing it, rebuild the dev image (`docker compose build php`), because `make start` does not rebuild. The dev container also needs `vendor/` on the host.
-- Until the step 9 `HEALTHCHECK`, `up --wait` only catches immediate failures. A container that fails after the migrations shows as running between restarts and can pass: check `docker compose ps -a`.
+- Until the step 9 `HEALTHCHECK` on Nginx (`wget` to `http://127.0.0.1:8080/healthz`), `up --wait` only catches immediate failures. With that healthcheck, a PHP container looping after migrations (e.g. `STATS_WINDOW_SIZE=1.5`) fails `up --wait --wait-timeout 60`.
 - `var/data` is created and owned by `www-data` in the image, so the named volume inherits the right owner. Containers run as non-root users. The prod image excludes `docker/`: Nginx holds its own configuration.
-- Image tags are pinned (`php:8.5.10-fpm`, `nginxinc/nginx-unprivileged:1.30.4-alpine`, `composer:2.10.3`, also `tools: composer:2.10.3` in `.github/workflows/ci.yaml`): bump them on purpose and rerun `make smoke` on the dev and prod stacks.
+- Image tags are pinned (`php:8.5.10-fpm`, `nginxinc/nginx-unprivileged:1.30.4-alpine`, `composer:2.10.3`, also `tools: composer:2.10.3` in `.github/workflows/ci.yaml`): bump them on purpose, rerun `make smoke` on the production stack and check the dev stack with `make start`.
 - Never add `zend_extension=opcache.so`: OPcache is built into PHP 8.5.

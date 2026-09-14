@@ -61,7 +61,7 @@ make stop                                               # docker compose down ; 
 make sh                                                 # shell dans le conteneur PHP
 make logs                                               # logs des services, en continu
 make build                                              # image prod : docker compose -f compose.yaml build php
-make smoke                                              # smoke test via Nginx contre la stack démarrée ; SMOKE_BASE_URL pour une autre adresse
+make smoke                                              # smoke test via Nginx, contre la stack PROD démarrée (refuse la dev) ; destructif : arrête PHP, down/up, laisse la prod démarrée ; SMOKE_BASE_URL pour une autre adresse
 make ci EXEC='docker compose exec -T php'               # vérification complète dans le conteneur (npx reste sur l'hôte)
 ```
 

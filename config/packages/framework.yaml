@@ -13,6 +13,14 @@ framework:
             status_code: 503
         App\FizzBuzz\Domain\Exception\InvalidFizzBuzzParameters:
             status_code: 500
+        # Client errors, not application faults: Nginx already logs status, path and request_id in its
+        # access log (§8.1). Kept under the prod "warning" threshold so app logs only carry real alerts.
+        Symfony\Component\HttpKernel\Exception\BadRequestHttpException:
+            log_level: info
+        Symfony\Component\HttpKernel\Exception\NotFoundHttpException:
+            log_level: info
+        Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException:
+            log_level: info
 
 when@test:
     framework:

@@ -397,16 +397,19 @@ Ces règles sont **vérifiées en CI par Deptrac** : une violation fait échouer
 | Infrastructure | `Api\GenerateFizzBuzzController` | `#[MapQueryString]` → `FizzBuzzParameters` → cas d'usage → JSON encodé une fois ; `HEAD` sans cas d'usage | logique métier |
 | Infrastructure | `Api\GetMostFrequentRequestController` | cas d'usage → JSON | SQL |
 | Infrastructure | `Api\GenerateFizzBuzzQuery` | DTO HTTP `final readonly` : 5 propriétés nullables typées et leurs contraintes `#[Assert\…]` ; `toParameters()` | règle métier |
+| Infrastructure | `Api\GenerateFizzBuzzQueryCacheWarmer` | précalcule au build les métadonnées serializer / type-info du DTO, dans le cache système (`var/cache/prod/pools/system`, en lecture seule en prod) : sans lui, chaque requête retente la même écriture et échoue (§7.6, §9.3) | logique métier |
 | Infrastructure | `Persistence\SqliteRequestStatisticsStore` | adaptateur SQLite : transaction de fenêtre, éviction, lecture, traduction des erreurs ; `applyWindowSize()` pour le démarrage | décision HTTP |
 | Infrastructure | `Persistence\SqliteConnectionPragmas` | middleware DBAL : `busy_timeout`, `synchronous` et `journal_size_limit` sur **chaque** connexion | — |
 | Infrastructure | `Cli\ApplyStatisticsWindowCommand` | commande `app:statistics:apply-window`, exécutée au démarrage (§6.6) | logique métier |
 | Shared | `Infrastructure\Http\HealthController` | readiness (§4.3) | — |
 | Shared | `Infrastructure\Http\JsonErrorFormatSubscriber` | force le format JSON, pour que toutes les erreurs Symfony (404 et 405 compris) sortent en problem+json | traduction métier |
 | Shared | `Infrastructure\Logging\RequestIdProcessor` | processeur Monolog : ajoute le `request_id` transmis par Nginx à chaque log | — |
+| Shared | `Infrastructure\Logging\RedactQueryStringProcessor` | processeur Monolog : retire la query string des messages et contextes string (promesse §8.1 sur les logs applicatifs) | — |
 
 **Traduction des exceptions** (configuration native `framework.exceptions`) :
 - `StatisticsStoreUnavailable` → 503. Elle n'atteint le client que depuis `GET /v1/stats`, car `GenerateFizzBuzz` l'intercepte.
 - `InvalidFizzBuzzParameters` → **500**, volontairement : après la validation HTTP, elle ne peut survenir que sur une **erreur de programmation**.
+- `BadRequestHttpException` (400), `NotFoundHttpException` (404) et `MethodNotAllowedHttpException` (405) → `log_level: info` : ce sont des erreurs du client, pas des pannes de l'application, déjà tracées par le log d'accès Nginx (statut, chemin, `request_id`, §8.1). Sous le seuil `warning` de la prod, elles n'y apparaissent donc plus ; elles restent visibles en dev, en test et en CI.
 
 **Pourquoi `applyWindowSize()` n'est pas dans le port** : c'est une opération de **maintenance propre à ce stockage**, lancée par l'infrastructure au démarrage. Aucun cas d'usage n'en a besoin : l'ajouter au port violerait la ségrégation des interfaces.
 
@@ -763,7 +766,7 @@ Client ──► [ nginx ] ── quotas, bornes, erreurs JSON ──► [ php (
 - **Deux conteneurs**, un processus chacun.
 - **PHP-FPM n'est jamais exposé** : sinon le rate limiting et les bornes Nginx seraient contournables.
 - Nginx ne contient aucun code : tout est transmis à `public/index.php`.
-- Images, tags figés : `nginxinc/nginx-unprivileged:1.30.4-alpine` (non-root), `php:8.5.10-fpm`, et `composer:2.10.3` pour la construction (même version dans la CI ; 2.9.5 abandonné le 2026-09-13 pour l'avis GHSA-f9f8-rm49-7jv2, corrigé en 2.9.8 **[source]** GitHub Advisory Database). Une montée de version est volontaire et repasse `make smoke` sur les stacks dev et prod.
+- Images, tags figés : `nginxinc/nginx-unprivileged:1.30.4-alpine` (non-root), `php:8.5.10-fpm`, et `composer:2.10.3` pour la construction (même version dans la CI ; 2.9.5 abandonné le 2026-09-13 pour l'avis GHSA-f9f8-rm49-7jv2, corrigé en 2.9.8 **[source]** GitHub Advisory Database). Une montée de version est volontaire : elle repasse `make smoke` sur la stack prod (le smoke l'exige depuis l'étape 9) et vérifie la stack dev avec `make start`.
 
 ### 7.3 Configuration Nginx
 
@@ -848,6 +851,7 @@ fastcgi_param SCRIPT_NAME /index.php;
 fastcgi_param DOCUMENT_ROOT /app/public;
 fastcgi_param HTTP_X_REQUEST_ID $request_id;     # corrélation avec les logs PHP
 fastcgi_hide_header Cache-Control;                # Nginx est la seule source de Cache-Control (voir headers.conf)
+fastcgi_connect_timeout 3s;                       # échec rapide si PHP-FPM n'accepte pas la connexion
 fastcgi_read_timeout 15s;                         # > request_terminate_timeout de FPM (10 s)
 ```
 
@@ -947,8 +951,7 @@ Le quota n'est **pas dupliqué** dans Symfony : le composant RateLimiter nécess
 - **`exec`** : PHP-FPM remplace le script et reçoit directement les signaux d'arrêt.
 - **Autre commande** (`docker compose run --rm php php bin/console …`) : l'entrypoint passe directement à `exec`, sans migrations ni fenêtre, pour qu'on puisse diagnostiquer un volume défaillant (choix du développeur, étape 7).
 - **En dev** : l'entrypoint est copié dans l'image, et le conteneur exige `vendor/` sur l'hôte, puisque le code est monté. Après une modification de `docker/php/docker-entrypoint.sh`, il faut reconstruire l'image dev (`docker compose build php`) : `make start` ne la reconstruit pas.
-- **Limite de `up --wait` tant qu'il n'y a pas de `HEALTHCHECK`** : un échec immédiat fait bien échouer la commande (volume en lecture seule : code 1). Un échec qui survient après les migrations peut en revanche passer inaperçu, car Compose voit le conteneur `running` entre deux redémarrages **[source]** (essai du 2026-09-13 avec `STATS_WINDOW_SIZE=1.5` : code 0, 8 redémarrages en 12 s). Le `HEALTHCHECK` de l'étape 9 lève cette limite.
-- **`HEALTHCHECK`** sur le conteneur Nginx : `wget` sur `/healthz` depuis `127.0.0.1`, ce qui valide toute la chaîne. Ajouté à l'étape 9, avec `HealthController` : avant, `/healthz` n'existe pas et `make start` attend seulement que les conteneurs tournent.
+- **`HEALTHCHECK`** sur le conteneur Nginx (`compose.yaml`) : `wget -q -O /dev/null http://127.0.0.1:8080/healthz`, `interval` 5 s, `timeout` 3 s, `retries` 3, `start_period` 15 s. `127.0.0.1` est déjà autorisé sur `/healthz` (§7.3). Avec ce healthcheck, `docker compose -f compose.yaml up -d --wait --wait-timeout 60` échoue quand PHP boucle au démarrage **[mesure]** (2026-09-14, `STATS_WINDOW_SIZE=1.5` → code 1 ; volume `var/data` en lecture seule → code ≠ 0).
 - **`.dockerignore`** : `var/`, `vendor/`, `.git`, `tests/`, `docs/` ; fichiers d'environnement locaux (`.env.local`, `.env.*.local`, `.env.test`) ; outillage et consignes (`.claude`, `CLAUDE*.md`, `AGENTS.md`, `Makefile`, fichiers compose, configurations de PHPStan, Deptrac, PHPUnit, PHP-CS-Fixer et Redocly). `docker/` et `.env` restent dans le contexte de build.
 - **Secrets** : aucun dans l'image. `APP_SECRET` est injecté à l'exécution ; les vraies variables d'environnement l'emportent sur le fichier généré par `dump-env`.
 
@@ -1002,7 +1005,7 @@ Le quota n'est **pas dupliqué** dans Symfony : le composant RateLimiter nécess
 | **Disponibilité** | `/healthz` (`ok` ou `degraded`) + `HEALTHCHECK` Docker + `ping.path` FPM (liveness) | — |
 | **Log d'accès Nginx** (JSON, stdout) | chemin **sans query string**, statut (dont 403, 413, 414, 429, 502, 504), durées totale et côté PHP, `request_id` | **absents** (`$uri`) |
 | **Logs applicatifs** (Monolog JSON, stderr, niveau `warning` en prod) | erreurs, appels servis en mode dégradé, `request_id` | **absents** : jamais journalisés |
-| **Log d'erreur Nginx** (stderr, niveau `error`) | rejets de quota : **non journalisés**, car émis au niveau `info` (`limit_req_log_level`), sous le seuil ; ils restent visibles dans le log d'accès. Rejets 403 (`/healthz`) et 413 : journalisés au niveau `error` (constaté le 2026-09-13 sur Nginx 1.30.4 **[hypothèse]**, vérifié par le smoke de l'étape 9). Incidents amont (502, 504, connexion FastCGI) : journalisés | **présents lors d'un incident amont ou d'un rejet 403 / 413** : Nginx ajoute la ligne de requête complète, query string comprise, à ses messages d'erreur **[source]** |
+| **Log d'erreur Nginx** (stderr, niveau `error`) | rejets de quota : **non journalisés**, car émis au niveau `info` (`limit_req_log_level`), sous le seuil ; ils restent visibles dans le log d'accès. Rejets 403 (`/healthz`) et 413 : journalisés au niveau `error` **[mesure]** (Nginx 1.30.4, smoke du 2026-09-14 : messages `access forbidden by rule` et `client intended to send too large body`, query string comprise). Incidents amont (502, 504, connexion FastCGI) : journalisés | **présents lors d'un incident amont ou d'un rejet 403 / 413** : Nginx ajoute la ligne de requête complète, query string comprise, à ses messages d'erreur **[source]** |
 
 **Politique retenue et compromis** :
 - **Promesse** : les paramètres sont **absents des logs d'accès et applicatifs**, en toutes circonstances. Ils peuvent apparaître dans le **log d'erreur Nginx lors d'un incident amont ou d'un rejet 403 / 413**.
@@ -1010,6 +1013,10 @@ Le quota n'est **pas dupliqué** dans Symfony : le composant RateLimiter nécess
 - **Mesures compensatoires** **[hypothèse d'exploitation]** : accès restreint au flux d'erreur Nginx, rétention courte, et rappel aux clients de ne jamais transmettre de données sensibles (§4.2).
 
 **Corrélation** : Nginx génère `$request_id`, le transmet à PHP (`X-Request-Id`), et `RequestIdProcessor` l'ajoute à chaque log applicatif ; il est aussi renvoyé au client dans l'en-tête `X-Request-Id`.
+
+**Fuite Symfony mesurée (étape 9)** : en `debug`, le canal `request` journalise la route matchée avec l'URL complète (`?str1=…&str2=…`). `RedactQueryStringProcessor` retire la query string des messages et des valeurs string du contexte / `extra`, sans toucher au log d'erreur Nginx (exception documentée ci-dessus).
+
+**Bruit mesuré (étape 9), corrigé** : `var/cache/prod` (dont le pool système du serializer / type-info) est en lecture seule en prod (§7.6). Le DTO `GenerateFizzBuzzQuery` n'a pas d'attribut serializer, donc `SerializerCacheWarmer` (natif Symfony) ne le découvre pas : sans précalcul, chaque `#[MapQueryString]` recalculait ses métadonnées et retentait la même écriture, en échec, journalisée en `warning` — 6 par appel (les métadonnées de la classe, puis le type de chacune des 5 propriétés) **[mesure]** (2026-09-14, avant correctif). `GenerateFizzBuzzQueryCacheWarmer` dénormalise un exemple au build (`cache:warmup`), ce qui précalcule ces entrées dans l'image : **0 warning mesuré** après correctif, sur le même appel.
 
 Ce socle rend l'application **prête à être supervisée** : une sonde peut surveiller `/healthz`, et une plateforme de logs peut en dériver débit, taux d'erreurs, taux de 429 et latence. Les métriques Prometheus sont en ouverture (§14.2).
 
@@ -1041,7 +1048,7 @@ Les tests ci-dessous sont **à écrire** lors de l'implémentation ; aucun n'est
 | **Concurrence** | SQLite, plusieurs processus | fichier partagé | plusieurs processus PHP enregistrent en parallèle : aucune perte, aucun doublon ; somme des hits = min(appels confirmés, N) ; lecture concurrente cohérente |
 | **Fonctionnel** | les 3 endpoints | `WebTestCase` + SQLite de test | **matrice complète du §3.3** (code et message attendus), dont absent, vide, `"0"`, espace et chaîne normale (R01), saut de ligne final et interne, retour chariot, tabulation, NUL (R02) ; pire cas `limit = 10 000` en moins de 6,1 Mo ; emoji renvoyé non échappé ; **HEAD** sur les 3 endpoints, sans corps ni comptage ; 400 non comptés ; ordre des paramètres ; stats vides et après N appels, avec `window` et départage ; 404/405/503 en problem+json ; `X-Request-Id` dans les logs ; stockage indisponible → `/v1/fizzbuzz` 200, `/v1/stats` 503, `/healthz` 200 `degraded` ; **erreur après commit** (exception injectée pendant l'encodage) → 500 **et** appel compté (R12) |
 | **Contrat OpenAPI** | exemples et règles de validation | Redocly + tests fonctionnels | les chaînes valides et invalides du §3.3 donnent le même verdict côté PHP et côté schéma OpenAPI (R02) |
-| **Smoke** | stack Docker complète via Nginx | `docker compose -f compose.yaml up -d --wait --wait-timeout 60` (image `prod`, sans la surcharge dev) + `curl` | `/healthz` 200 en local ; **403 JSON** avec `X-Forwarded-For` d'une IP publique ; appel fizzbuzz 200 ; **3 requêtes acceptées puis 429 JSON** avec `Retry-After` ; deux IP simulées ont chacune leur quota ; un 429 n'est pas compté ; `/healthz` hors quota ; 413 en JSON ; **414 en JSON avec une vraie URL dépassant 8 Ko, et non 500 ni HTML** (R07) ; **`Cache-Control: no-store` et `X-Request-Id`** sur un 200, un 400, un 413, un 414, un 429, un 502 et sur `HEAD` (R11) ; **marqueurs de test** dans `str1` et `str2` absents du log d'accès et du log d'erreur après succès et après 429, et présence dans le log d'erreur après un 502 ou un 413, conforme à la politique du §8.1 (R08) |
+| **Smoke** | stack Docker complète via Nginx | `docker compose -f compose.yaml up -d --wait --wait-timeout 60` (image `prod`, sans la surcharge dev) + `curl` | `/healthz` 200 en local ; **403 JSON** avec `X-Forwarded-For` d'une IP publique ; appel fizzbuzz 200 ; **3 requêtes acceptées puis 429 JSON** avec `Retry-After` ; deux IP simulées ont chacune leur quota ; un 429 n'est pas compté ; `/healthz` hors quota ; 413 en JSON ; **414 en JSON avec une vraie URL dépassant 8 Ko, et non 500 ni HTML** (R07) ; **`Cache-Control: no-store` et `X-Request-Id`** sur un 200, un 400, un 413, un 414, un 429, un 502 (ou 504, voir ci-dessous) et sur `HEAD` (R11) ; **marqueurs de test**, propres à chaque scénario, dans `str1` et `str2` : absents du log d'accès, absents du log d'erreur après succès et après 429, présents dans le log d'erreur après un 403, un 413 et un incident amont, conforme à la politique du §8.1 (R08). « 429 non compté » compare `window.count`, avec un 200 compté comme témoin. PHP arrêté donne 502 ou 504 selon la plateforme : Nginx garde l'adresse résolue au démarrage, et la connexion est soit refusée, soit sans réponse avant `fastcgi_connect_timeout` (3 s) **[mesure]** (Docker Desktop : 504). Le smoke exige la stack prod et la laisse démarrée |
 | **Démarrage** | conteneur PHP | volume inaccessible | volume en lecture seule ou droits incorrects → le conteneur s'arrête avec un code d'erreur, PHP-FPM ne démarre pas (R05) |
 
 Base de test : `var/test.db` (`DATABASE_URL` défini dans `.env.test`), migrée par `make test-db` et par l'étape « migrations de test » de la CI. Les tables sont vidées dans `setUp()`, séquence `AUTOINCREMENT` comprise, et la fenêtre est réduite (par exemple N = 5) pour observer les évictions. Les tests qui ont besoin de leur propre fichier (migrations, concurrence) migrent un fichier temporaire dans un sous-processus.
@@ -1065,7 +1072,7 @@ Base de test : `var/test.db` (`DATABASE_URL` défini dans `.env.test`), migrée 
 
 Versions relevées sur Packagist le 2026-09-11 : `symfony/framework-bundle` 8.1.6, `doctrine/doctrine-bundle` 3.3, `doctrine/doctrine-migrations-bundle` 4.0, `phpunit/phpunit` 13.3, `phpstan/phpstan` 2.2, `deptrac/deptrac` 4.7.1.
 
-Chaque paquet est installé à l'étape du plan qui s'en sert (§12). **[source]** `composer show`, 2026-09-13 : à l'étape 2, `phpunit/phpunit` 13.3.3, `phpstan/phpstan` 2.2.14, `phpstan/phpstan-symfony` 2.0.20, `friendsofphp/php-cs-fixer` 3.95.25 et `deptrac/deptrac` 4.7.1. `psr/log` 3.0.2 est déclaré directement à l'étape 6 : `Application` en dépend (`LoggerInterface`), il n'arrive plus seulement par Symfony **[source]** `composer show psr/log`, 2026-09-13. À l'étape 7 : `doctrine/dbal` 4.4.4, `doctrine/doctrine-bundle` 3.3.2 et `doctrine/doctrine-migrations-bundle` 4.0.1, qui apporte `doctrine/migrations` 3.9.7 **[source]** (`composer require`, 2026-09-13). À l'étape 8 : `symfony/validator` 8.1.6, `symfony/serializer` 8.1.6, `symfony/property-access` 8.1.4, `symfony/property-info` 8.1.6 (avec `symfony/type-info` 8.1.5), `symfony/browser-kit` 8.1.5 (avec `symfony/dom-crawler` 8.1.5) **[source]** `composer.lock`, 2026-09-14. `symfony/monolog-bundle` reste pour l'étape 9. `extra.symfony.docker` vaut `false` dans `composer.json`, pour que les recettes Flex n'ajoutent pas de service de base de données à `compose.yaml`. La recette de DoctrineBundle, qui écrit une configuration ORM, a été réécrite en DBAL seul.
+Chaque paquet est installé à l'étape du plan qui s'en sert (§12). **[source]** `composer show`, 2026-09-13 : à l'étape 2, `phpunit/phpunit` 13.3.3, `phpstan/phpstan` 2.2.14, `phpstan/phpstan-symfony` 2.0.20, `friendsofphp/php-cs-fixer` 3.95.25 et `deptrac/deptrac` 4.7.1. `psr/log` 3.0.2 est déclaré directement à l'étape 6 : `Application` en dépend (`LoggerInterface`), il n'arrive plus seulement par Symfony **[source]** `composer show psr/log`, 2026-09-13. À l'étape 7 : `doctrine/dbal` 4.4.4, `doctrine/doctrine-bundle` 3.3.2 et `doctrine/doctrine-migrations-bundle` 4.0.1, qui apporte `doctrine/migrations` 3.9.7 **[source]** (`composer require`, 2026-09-13). À l'étape 8 : `symfony/validator` 8.1.6, `symfony/serializer` 8.1.6, `symfony/property-access` 8.1.4, `symfony/property-info` 8.1.6 (avec `symfony/type-info` 8.1.5), `symfony/browser-kit` 8.1.5 (avec `symfony/dom-crawler` 8.1.5) **[source]** `composer.lock`, 2026-09-14. À l'étape 9 : `symfony/monolog-bundle` 4.1.0, `monolog/monolog` 3.12.0, `symfony/monolog-bridge` 8.1.6 **[source]** `composer show`, 2026-09-14. `extra.symfony.docker` vaut `false` dans `composer.json`, pour que les recettes Flex n'ajoutent pas de service de base de données à `compose.yaml`. La recette de DoctrineBundle, qui écrit une configuration ORM, a été réécrite en DBAL seul.
 
 ### 9.4 Test de charge (k6) — à réaliser
 
@@ -1151,6 +1158,7 @@ leboncoin-test/
 │   │       ├── Api/
 │   │       │   ├── GenerateFizzBuzzController.php
 │   │       │   ├── GenerateFizzBuzzQuery.php
+│   │       │   ├── GenerateFizzBuzzQueryCacheWarmer.php
 │   │       │   └── GetMostFrequentRequestController.php
 │   │       ├── Cli/
 │   │       │   └── ApplyStatisticsWindowCommand.php
@@ -1163,7 +1171,8 @@ leboncoin-test/
 │   │       │   ├── HealthController.php
 │   │       │   └── JsonErrorFormatSubscriber.php
 │   │       └── Logging/
-│   │           └── RequestIdProcessor.php
+│   │           ├── RequestIdProcessor.php
+│   │           └── RedactQueryStringProcessor.php
 │   └── Kernel.php
 ├── tests/
 │   ├── Unit/
@@ -1178,7 +1187,7 @@ leboncoin-test/
 │   │   │   ├── MigrationsTest.php                               # rejouables, schéma identique à lib.php, WAL
 │   │   │   └── Fixtures/record-worker.php                       # processus écrivain ou lecteur de la concurrence
 │   │   └── Cli/ApplyStatisticsWindowCommandTest.php
-│   ├── Functional/{GenerateFizzBuzzEndpointTest.php, StatisticsEndpointTest.php, HealthEndpointTest.php}
+│   ├── Functional/{GenerateFizzBuzzEndpointTest.php, StatisticsEndpointTest.php, HealthEndpointTest.php, ApplicationLoggingPrivacyTest.php}
 │   ├── Smoke/smoke.sh                                           # via Nginx : quotas, erreurs JSON, en-têtes, logs, démarrage
 │   ├── Load/fizzbuzz.js                                         # k6 : démonstration de l'objectif de latence
 │   ├── Support/InMemoryRequestStatisticsStore.php

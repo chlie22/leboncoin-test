@@ -67,7 +67,7 @@ test-integration: test-db ## Tests d'intégration (SQLite, commande de démarrag
 test-functional: test-db ## Tests fonctionnels (WebTestCase)
 	$(PHP) vendor/bin/phpunit --testsuite functional
 
-smoke: ## Smoke test via Nginx, contre la stack démarrée (make start)
+smoke: ## Smoke test via Nginx, contre la stack PROD démarrée ; arrête et relance les conteneurs, laisse la prod démarrée
 	BASE_URL=$(SMOKE_BASE_URL) tests/Smoke/smoke.sh
 
 lint: ## PHP-CS-Fixer (dry-run), container, YAML, PHPStan, Deptrac, OpenAPI
